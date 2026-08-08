@@ -38,8 +38,13 @@
 #   relative paths, which resolve against whatever directory git happens to
 #   be in on the other machine
 #   "/../" traversal inside a local or file: path
+FM_PROJECT_ORIGIN_HOST=
+FM_PROJECT_ORIGIN_PREFIX=
+
 fm_project_origin_safe() { # <url>; 0 when the URL is an accepted clone URL
   local url=${1-} rest authority userpart hostpart port inner host path
+  FM_PROJECT_ORIGIN_HOST=
+  FM_PROJECT_ORIGIN_PREFIX=
 
   case $url in
     '' | -*) return 1 ;;
@@ -111,6 +116,9 @@ fm_project_origin_safe() { # <url>; 0 when the URL is an accepted clone URL
           fi
           ;;
       esac
+      FM_PROJECT_ORIGIN_HOST=${host#'['}
+      FM_PROJECT_ORIGIN_HOST=${FM_PROJECT_ORIGIN_HOST%']'}
+      FM_PROJECT_ORIGIN_PREFIX="${url%%"$rest"}$authority/"
       return 0
       ;;
     file:///?*)
@@ -160,6 +168,8 @@ fm_project_origin_safe() { # <url>; 0 when the URL is an accepted clone URL
       case $inner in
         *[!0-9A-Fa-f:.%]*) return 1 ;;
       esac
+      FM_PROJECT_ORIGIN_HOST=$inner
+      FM_PROJECT_ORIGIN_PREFIX=${url%"$path"}
       return 0
       ;;
   esac
@@ -176,5 +186,26 @@ fm_project_origin_safe() { # <url>; 0 when the URL is an accepted clone URL
   case $path in
     '' | :*) return 1 ;;
   esac
+  FM_PROJECT_ORIGIN_HOST=$host
+  FM_PROJECT_ORIGIN_PREFIX=${url%"$path"}
   return 0
+}
+
+fm_project_origin_with_path() {
+  local path=${2-}
+  fm_project_origin_safe "${1-}" || return 1
+  [ -n "$FM_PROJECT_ORIGIN_PREFIX" ] || return 1
+  case "$path" in
+    ''|-*|/*) return 1 ;;
+  esac
+  case "$path" in
+    *[[:space:]]*|*[[:cntrl:]]*) return 1 ;;
+  esac
+  printf '%s%s' "$FM_PROJECT_ORIGIN_PREFIX" "$path"
+}
+
+fm_project_origin_host() {
+  fm_project_origin_safe "${1-}" || return 1
+  [ -n "$FM_PROJECT_ORIGIN_HOST" ] || return 1
+  printf '%s' "$FM_PROJECT_ORIGIN_HOST" | tr '[:upper:]' '[:lower:]'
 }
