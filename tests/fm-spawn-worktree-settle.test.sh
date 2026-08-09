@@ -142,30 +142,30 @@ test_already_settled_pane_costs_one_confirm_sleep() {
   pass "an already-settled pane confirms via the existing inter-poll sleep, not an extra full cycle"
 }
 
-test_orchalycious_spawn_records_the_brief_issue_key() {
+test_spawn_records_the_brief_issue_key() {
   local rec id out status brief
   id=settle-orc-issue-z3
-  rec=$(make_settle_case settle-orc "$id" 0 orchalycious)
+  rec=$(make_settle_case settle-issue "$id" 0 fixture-project)
   read_settle_record "$rec"
   brief="$HOME_DIR/data/$id/brief.md"
   printf '%s\n' 'Delivery contract: mode=no-mistakes' 'Delivery issue: ORC-88' > "$brief"
 
   out=$(run_settle_spawn "$id")
   status=$?
-  [ "$status" -ne 0 ] || fail "Orchalycious spawn without an intake issue key should fail"
-  assert_contains "$out" "require an explicit ORC issue key from intake" \
-    "Orchalycious spawn did not explain the missing issue key"
+  [ "$status" -ne 0 ] || fail "spawn without the brief's issue key should fail"
+  assert_contains "$out" "delivery issue mismatch" \
+    "spawn did not explain the missing issue key"
 
   out=$(run_settle_spawn "$id" ORC-88)
   status=$?
-  expect_code 0 "$status" "Orchalycious spawn with the brief's issue key should succeed"
+  expect_code 0 "$status" "spawn with the brief's issue key should succeed"
   assert_grep 'issue_key=ORC-88' "$HOME_DIR/state/$id.meta" \
     "spawn metadata did not retain the intake issue key"
-  pass "Orchalycious spawn records the brief issue key in task metadata"
+  pass "spawn records the brief issue key in task metadata"
 }
 
 test_single_stale_first_read_is_not_accepted
 test_already_settled_pane_costs_one_confirm_sleep
-test_orchalycious_spawn_records_the_brief_issue_key
+test_spawn_records_the_brief_issue_key
 
 echo "# all fm-spawn-worktree-settle tests passed"

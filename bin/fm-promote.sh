@@ -12,7 +12,7 @@
 # read the scout's report (AGENTS.md section 7); data/projects.md holds the
 # captain's standing posture as context, and this script never looks it up.
 # no-mistakes-prod-only is a registry policy rather than a task mode and is refused.
-# Usage: fm-promote.sh <task-id> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--issue-key <key>]
+# Usage: fm-promote.sh <task-id> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--issue-key <key>] [--delivery-title-rule <template> --delivery-link-rule <template>]
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,9 +28,13 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 MODE=
 YOLO=
 ISSUE_KEY=
+DELIVERY_TITLE_RULE=
+DELIVERY_LINK_RULE=
 MODE_SET=0
 YOLO_SET=0
 ISSUE_KEY_SET=0
+DELIVERY_TITLE_RULE_SET=0
+DELIVERY_LINK_RULE_SET=0
 POS=()
 want_value=
 for a in "$@"; do
@@ -42,6 +46,8 @@ for a in "$@"; do
       mode) MODE=$a; MODE_SET=1 ;;
       yolo) YOLO=$a; YOLO_SET=1 ;;
       issue-key) ISSUE_KEY=$a; ISSUE_KEY_SET=1 ;;
+      delivery-title-rule) DELIVERY_TITLE_RULE=$a; DELIVERY_TITLE_RULE_SET=1 ;;
+      delivery-link-rule) DELIVERY_LINK_RULE=$a; DELIVERY_LINK_RULE_SET=1 ;;
     esac
     want_value=
     continue
@@ -53,11 +59,15 @@ for a in "$@"; do
     --yolo=*) YOLO=${a#--yolo=}; YOLO_SET=1 ;;
     --issue-key) want_value=issue-key ;;
     --issue-key=*) ISSUE_KEY=${a#--issue-key=}; ISSUE_KEY_SET=1 ;;
+    --delivery-title-rule) want_value=delivery-title-rule ;;
+    --delivery-title-rule=*) DELIVERY_TITLE_RULE=${a#--delivery-title-rule=}; DELIVERY_TITLE_RULE_SET=1 ;;
+    --delivery-link-rule) want_value=delivery-link-rule ;;
+    --delivery-link-rule=*) DELIVERY_LINK_RULE=${a#--delivery-link-rule=}; DELIVERY_LINK_RULE_SET=1 ;;
     *) POS+=("$a") ;;
   esac
 done
 [ -z "$want_value" ] || { echo "error: --$want_value requires a value" >&2; exit 1; }
-[ "${#POS[@]}" -ge 1 ] || { echo "usage: fm-promote.sh <task-id> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--issue-key <key>]" >&2; exit 1; }
+[ "${#POS[@]}" -ge 1 ] || { echo "usage: fm-promote.sh <task-id> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--issue-key <key>] [--delivery-title-rule <template> --delivery-link-rule <template>]" >&2; exit 1; }
 [ "$MODE_SET" -eq 1 ] || {
   echo "error: promotion requires --mode <no-mistakes|direct-PR|local-only>; decide it now from the scout's findings and the project's registered posture in data/projects.md" >&2
   exit 1
@@ -80,6 +90,12 @@ esac
 [ "$ISSUE_KEY_SET" -eq 0 ] || [ -n "$ISSUE_KEY" ] || { echo "error: --issue-key requires a non-empty value" >&2; exit 1; }
 if [ "$ISSUE_KEY_SET" -eq 1 ] && ! printf '%s\n' "$ISSUE_KEY" | grep -Eq '^[A-Z][A-Z0-9]*-[0-9]+$'; then
   echo "error: --issue-key must be an uppercase issue key followed by a numeric identifier" >&2
+  exit 1
+fi
+if [ "$DELIVERY_TITLE_RULE_SET" -ne "$DELIVERY_LINK_RULE_SET" ] \
+  || { [ "$DELIVERY_TITLE_RULE_SET" -eq 1 ] \
+    && { ! fm_pr_delivery_rule_valid "$DELIVERY_TITLE_RULE" || ! fm_pr_delivery_rule_valid "$DELIVERY_LINK_RULE"; }; }; then
+  echo "error: delivery rules require valid title and link templates containing {issue_key}" >&2
   exit 1
 fi
 
@@ -117,20 +133,15 @@ fm_lock_acquire_wait "$META_LOCK"
 META_LOCK_HELD=1
 [ -f "$META" ] || { echo "error: no meta for task $ID at $META" >&2; exit 1; }
 grep -qx 'kind=scout' "$META" || { echo "error: task $ID is not a scout task (kind=scout not in meta)" >&2; exit 1; }
-PROJECT=$(grep '^project=' "$META" | tail -1 | cut -d= -f2- || true)
-if [ "$(basename "$PROJECT")" = orchalycious ] && [ -n "$ISSUE_KEY" ]; then
-  printf '%s\n' "$ISSUE_KEY" | grep -Eq '^ORC-[0-9]+$' || {
-    echo "error: Orchalycious promotion issue key must match ORC-<number>" >&2
-    exit 1
-  }
-fi
 TMP="$STATE/.$ID.meta.promote.${BASHPID:-$$}"
-grep -v -e '^kind=' -e '^mode=' -e '^yolo=' -e '^issue_key=' "$META" > "$TMP"
+grep -v -e '^kind=' -e '^mode=' -e '^yolo=' -e '^issue_key=' -e '^delivery_title_rule=' -e '^delivery_link_rule=' "$META" > "$TMP"
 {
   echo "kind=ship"
   echo "mode=$MODE"
   echo "yolo=$YOLO"
   [ -z "$ISSUE_KEY" ] || echo "issue_key=$ISSUE_KEY"
+  [ -z "$DELIVERY_TITLE_RULE" ] || echo "delivery_title_rule=$DELIVERY_TITLE_RULE"
+  [ -z "$DELIVERY_LINK_RULE" ] || echo "delivery_link_rule=$DELIVERY_LINK_RULE"
 } >> "$TMP"
 mv "$TMP" "$META"
 TMP=
@@ -146,6 +157,12 @@ case "$MODE" in
 esac
 ISSUE_GUIDANCE=
 if [ -n "$ISSUE_KEY" ]; then
-  ISSUE_GUIDANCE="; expected Linear issue $ISSUE_KEY; PR title must begin with ${ISSUE_KEY}: and the PR body must link https://linear.app/<workspace>/issue/$ISSUE_KEY"
+  ISSUE_GUIDANCE="; expected issue $ISSUE_KEY"
+  if [ -n "$DELIVERY_TITLE_RULE" ] && [ -n "$DELIVERY_LINK_RULE" ]; then
+    TITLE_RULE_TEXT=$(fm_pr_delivery_rule_expand "$DELIVERY_TITLE_RULE" "$ISSUE_KEY")
+    LINK_RULE_TEXT=$(fm_pr_delivery_rule_expand "$DELIVERY_LINK_RULE" "$ISSUE_KEY")
+    ISSUE_GUIDANCE="$ISSUE_GUIDANCE; PR title must begin with $TITLE_RULE_TEXT and the PR body must link $LINK_RULE_TEXT"
+  fi
 fi
-echo "next: FM_HOME=$HOME_Q bin/fm-send.sh fm-$ID '<ship instructions for mode=$MODE$ISSUE_GUIDANCE: review scratch state with git status and git log; reset to a clean default-branch base; carry over only intended fix changes; create branch fm/$ID; implement; $SHIP_FINISH>'"
+INSTRUCTION="<ship instructions for mode=$MODE$ISSUE_GUIDANCE: review scratch state with git status and git log; reset to a clean default-branch base; carry over only intended fix changes; create branch fm/$ID; implement; $SHIP_FINISH>"
+echo "next: FM_HOME=$HOME_Q bin/fm-send.sh fm-$ID '$INSTRUCTION'"

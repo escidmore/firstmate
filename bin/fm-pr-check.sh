@@ -40,6 +40,23 @@ if [ ! -f "$META" ] || [ -L "$META" ] || [ "$(fm_pr_file_link_count "$META")" !=
   echo "error: task metadata is unavailable" >&2
   exit 1
 fi
+ISSUE_KEY=$(grep '^issue_key=' "$META" | tail -1 | cut -d= -f2- || true)
+DELIVERY_TITLE_RULE=$(grep '^delivery_title_rule=' "$META" | tail -1 | cut -d= -f2- || true)
+DELIVERY_LINK_RULE=$(grep '^delivery_link_rule=' "$META" | tail -1 | cut -d= -f2- || true)
+if [ -n "$ISSUE_KEY" ] && ! printf '%s\n' "$ISSUE_KEY" | grep -Eq '^[A-Z][A-Z0-9]*-[0-9]+$'; then
+  echo "error: task metadata carries an invalid issue key" >&2
+  exit 1
+fi
+if [ -n "$DELIVERY_TITLE_RULE" ] || [ -n "$DELIVERY_LINK_RULE" ]; then
+  if [ -z "$DELIVERY_TITLE_RULE" ] || [ -z "$DELIVERY_LINK_RULE" ] \
+    || ! fm_pr_delivery_rule_valid "$DELIVERY_TITLE_RULE" \
+    || ! fm_pr_delivery_rule_valid "$DELIVERY_LINK_RULE"; then
+      echo "error: task metadata carries an invalid delivery rule" >&2
+      exit 1
+  fi
+fi
+DELIVERY_RULE=0
+[ -z "$ISSUE_KEY" ] || [ -z "$DELIVERY_TITLE_RULE" ] || [ -z "$DELIVERY_LINK_RULE" ] || DELIVERY_RULE=1
 
 # A prior exact merged result may have queued its durable wake immediately
 # before interruption.
@@ -73,11 +90,34 @@ fi
 # bin/fm-review-diff.sh resolves the head from the remote when none is recorded.
 WT=$(grep '^worktree=' "$META" | tail -1 | cut -d= -f2- || true)
 PR_HEAD=
+PR_TITLE=
+PR_BODY=
 if [ "$PROVIDER" = github ] && [ -n "$WT" ] && [ -d "$WT" ] && command -v gh >/dev/null 2>&1; then
-  if REMOTE_HEAD=$(cd "$WT" && gh pr view "$URL" --json headRefOid -q .headRefOid 2>/dev/null) \
-    && fm_pr_head_valid "$REMOTE_HEAD"; then
-    PR_HEAD=$REMOTE_HEAD
+  PR_VIEW=$(cd "$WT" && gh pr view "$URL" --json headRefOid,title,body --jq '[.headRefOid, .title, .body] | @tsv' 2>/dev/null) || PR_VIEW=
+  case "$PR_VIEW" in *$'\n'*) PR_VIEW= ;; esac
+  if [ -n "$PR_VIEW" ]; then
+    IFS=$'\t' read -r REMOTE_HEAD PR_TITLE PR_BODY <<< "$PR_VIEW"
+    fm_pr_head_valid "$REMOTE_HEAD" && PR_HEAD=$REMOTE_HEAD
   fi
+elif [ "$PROVIDER" = gitlab ] && [ "$DELIVERY_RULE" = 1 ]; then
+  RAW_VIEW=$(glab mr view "$NUMBER" -R "https://$HOST/$PROJECT_PATH" 2>/dev/null) || RAW_VIEW=
+  PR_TITLE=$(printf '%s\n' "$RAW_VIEW" | sed -n 's/^title:[[:space:]]*//p' | head -1)
+  PR_BODY=$(printf '%s\n' "$RAW_VIEW" | sed -n '/^--$/,$p' | sed '1d')
+fi
+
+if [ "$DELIVERY_RULE" = 1 ]; then
+  [ -n "$PR_TITLE" ] && [ -n "$PR_BODY" ] || {
+    echo "error: could not read PR title and body for delivery validation" >&2
+    exit 1
+  }
+  fm_pr_delivery_title_matches "$PR_TITLE" "$DELIVERY_TITLE_RULE" "$ISSUE_KEY" || {
+    echo "error: PR title does not match the declared delivery rule" >&2
+    exit 1
+  }
+  fm_pr_delivery_body_links_issue "$PR_BODY" "$DELIVERY_LINK_RULE" "$ISSUE_KEY" || {
+    echo "error: PR body does not link the expected issue" >&2
+    exit 1
+  }
 fi
 
 META_TMP=
