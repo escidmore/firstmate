@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Record a PR-ready task: store one validated canonical pr=<url> and the forge's
-# exact pr_head=<sha> when available, then atomically arm a static merge poll.
+# Record a PR-ready task: validate any project-owned delivery rule, store one
+# validated canonical pr=<url> and the forge's exact pr_head=<sha> when
+# available, then atomically arm a static merge poll.
 # The watcher check source is byte-for-byte bin/fm-pr-poll.sh; task and PR data
 # live only in a private sidecar and are never interpolated into shell source.
 # GitHub and Forgejo pull request URLs and GitLab merge request URLs are
@@ -41,6 +42,8 @@ if [ ! -f "$META" ] || [ -L "$META" ] || [ "$(fm_pr_file_link_count "$META")" !=
   exit 1
 fi
 PROJECT=$(grep '^project=' "$META" | tail -1 | cut -d= -f2- || true)
+PROJECT_NAME=$(basename "$PROJECT")
+ISSUE_KEY=$(grep '^issue_key=' "$META" | tail -1 | cut -d= -f2- || true)
 if [ "$PROVIDER" = forgejo ] && ! fm_pr_forgejo_project_authorized "$PROJECT" "$HOST"; then
   echo "error: Forgejo host is not authorized by the task project remotes" >&2
   exit 1
@@ -73,22 +76,55 @@ fi
 "$SCRIPT_DIR/fm-pr-check-migrate.sh" --checks-safe || exit 1
 "$FM_ROOT/bin/fm-guard.sh" || true
 
-# pr_head is recorded only when the forge's CLI can supply it without a JSON
-# dependency. GitLab records none. Teardown and review-diff tolerate that
+# pr_head is recorded only when the forge's CLI can supply it without an extra
+# JSON dependency. GitLab records none. Teardown and review-diff tolerate that
 # omission through their content-check and local-branch fallbacks.
 WT=$(grep '^worktree=' "$META" | tail -1 | cut -d= -f2- || true)
 PR_HEAD=
+PR_TITLE=
+PR_BODY=
 if [ "$PROVIDER" = github ] && [ -n "$WT" ] && [ -d "$WT" ] && command -v gh >/dev/null 2>&1; then
-  if REMOTE_HEAD=$(cd "$WT" && gh pr view "$URL" --json headRefOid -q .headRefOid 2>/dev/null) \
-    && fm_pr_head_valid "$REMOTE_HEAD"; then
-    PR_HEAD=$REMOTE_HEAD
+  PR_VIEW=$(cd "$WT" && gh pr view "$URL" --json headRefOid,title,body --jq '[.headRefOid, .title, .body] | @tsv' 2>/dev/null) || PR_VIEW=
+  case "$PR_VIEW" in *$'\n'*) PR_VIEW= ;; esac
+  if [ -n "$PR_VIEW" ]; then
+    IFS=$'\t' read -r REMOTE_HEAD PR_TITLE PR_BODY <<< "$PR_VIEW"
+    fm_pr_head_valid "$REMOTE_HEAD" && PR_HEAD=$REMOTE_HEAD
   fi
 elif [ "$PROVIDER" = forgejo ]; then
-  RAW_VIEW=$(forgejo-axi pr view --base-url "https://$HOST" --repo "$PROJECT_PATH" "$NUMBER" 2>/dev/null) || RAW_VIEW=
+  RAW_VIEW=$(forgejo-axi pr view --base-url "https://$HOST" --repo "$PROJECT_PATH" "$NUMBER" --full 2>/dev/null) || RAW_VIEW=
   REMOTE_HEAD=$(printf '%s\n' "$RAW_VIEW" | sed -n 's/^[[:space:]]*head_sha:[[:space:]]*//p' | head -1)
+  PR_TITLE=$(printf '%s\n' "$RAW_VIEW" | sed -n 's/^[[:space:]]*title:[[:space:]]*//p' | head -1)
+  PR_TITLE=${PR_TITLE#\"}
+  PR_TITLE=${PR_TITLE%\"}
+  PR_BODY=$(printf '%s\n' "$RAW_VIEW" | sed -n 's/^[[:space:]]*body:[[:space:]]*//p' | head -1)
   if fm_pr_head_valid "$REMOTE_HEAD"; then
     PR_HEAD=$REMOTE_HEAD
   fi
+elif [ "$PROVIDER" = gitlab ] && [ "$PROJECT_NAME" = orchalycious ]; then
+  RAW_VIEW=$(glab mr view "$NUMBER" -R "https://$HOST/$PROJECT_PATH" 2>/dev/null) || RAW_VIEW=
+  PR_TITLE=$(printf '%s\n' "$RAW_VIEW" | sed -n 's/^title:[[:space:]]*//p' | head -1)
+  PR_BODY=$(printf '%s\n' "$RAW_VIEW" | sed -n '/^--$/,$p' | sed '1d')
+fi
+
+if [ "$PROJECT_NAME" = orchalycious ]; then
+  printf '%s\n' "$ISSUE_KEY" | grep -Eq '^ORC-[0-9]+$' || {
+    echo "error: task metadata does not carry the required Linear issue key" >&2
+    exit 1
+  }
+  [ -n "$PR_TITLE" ] && [ -n "$PR_BODY" ] || {
+    echo "error: could not read PR title and body for delivery validation" >&2
+    exit 1
+  }
+  case "$PR_TITLE" in
+    "$ISSUE_KEY: "*) ;;
+    *)
+      echo "error: PR title must begin with the task's Linear issue key followed by a colon and space" >&2
+      exit 1 ;;
+  esac
+  printf '%s\n' "$PR_BODY" | grep -Eq "https://linear\\.app/[^/[:space:])]+/issue/$ISSUE_KEY([^A-Za-z0-9-]|$)" || {
+    echo "error: PR body must link the task's Linear issue" >&2
+    exit 1
+  }
 fi
 
 META_TMP=

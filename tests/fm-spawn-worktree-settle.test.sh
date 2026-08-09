@@ -64,10 +64,10 @@ SH
 # entirely, distinct from both the project and the worktree - mirroring the
 # live incident where the stale read was another real firstmate home).
 make_settle_case() {
-  local name=$1 id=$2 stale_reads=$3 case_dir home proj wt stale fakebin countfile
+  local name=$1 id=$2 stale_reads=$3 project_name=${4:-project} case_dir home proj wt stale fakebin countfile
   case_dir="$TMP_ROOT/$name"
   home="$case_dir/home"
-  proj="$case_dir/project"
+  proj="$case_dir/$project_name"
   wt="$case_dir/wt"
   stale="$case_dir/stale-other-checkout"
   countfile="$case_dir/pane-call-count"
@@ -89,7 +89,8 @@ EOF
 }
 
 run_settle_spawn() {
-  local id=$1
+  local id=$1 issue_key=${2:-} issue_args=()
+  [ -z "$issue_key" ] || issue_args=(--issue-key "$issue_key")
   FM_ROOT_OVERRIDE='' FM_HOME="$HOME_DIR" \
     FM_STATE_OVERRIDE="$HOME_DIR/state" FM_DATA_OVERRIDE="$HOME_DIR/data" \
     FM_PROJECTS_OVERRIDE="$HOME_DIR/projects" FM_CONFIG_OVERRIDE="$HOME_DIR/config" \
@@ -97,7 +98,7 @@ run_settle_spawn() {
     FM_FAKE_PANE_PATH="$WT_DIR" FM_FAKE_PANE_STALE="$STALE_DIR" \
     FM_FAKE_PANE_STALE_READS="$STALE_READS" FM_FAKE_PANE_COUNTFILE="$COUNTFILE" \
     PATH="$FAKEBIN_DIR:$PATH" \
-    "$SPAWN" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off 2>&1
+    "$SPAWN" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off "${issue_args[@]}" 2>&1
 }
 
 # A single stale first read (the exact incident) must not be accepted: the
@@ -141,7 +142,30 @@ test_already_settled_pane_costs_one_confirm_sleep() {
   pass "an already-settled pane confirms via the existing inter-poll sleep, not an extra full cycle"
 }
 
+test_orchalycious_spawn_records_the_brief_issue_key() {
+  local rec id out status brief
+  id=settle-orc-issue-z3
+  rec=$(make_settle_case settle-orc "$id" 0 orchalycious)
+  read_settle_record "$rec"
+  brief="$HOME_DIR/data/$id/brief.md"
+  printf '%s\n' 'Delivery contract: mode=no-mistakes' 'Delivery issue: ORC-88' > "$brief"
+
+  out=$(run_settle_spawn "$id")
+  status=$?
+  [ "$status" -ne 0 ] || fail "Orchalycious spawn without an intake issue key should fail"
+  assert_contains "$out" "require an explicit ORC issue key from intake" \
+    "Orchalycious spawn did not explain the missing issue key"
+
+  out=$(run_settle_spawn "$id" ORC-88)
+  status=$?
+  expect_code 0 "$status" "Orchalycious spawn with the brief's issue key should succeed"
+  assert_grep 'issue_key=ORC-88' "$HOME_DIR/state/$id.meta" \
+    "spawn metadata did not retain the intake issue key"
+  pass "Orchalycious spawn records the brief issue key in task metadata"
+}
+
 test_single_stale_first_read_is_not_accepted
 test_already_settled_pane_costs_one_confirm_sleep
+test_orchalycious_spawn_records_the_brief_issue_key
 
 echo "# all fm-spawn-worktree-settle tests passed"

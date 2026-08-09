@@ -69,6 +69,13 @@ SH
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_TEST_GH_LOG"
 case " $* " in
+  *" headRefOid,title,body "*)
+    [ "${FM_TEST_GH_VIEW_FAIL:-0}" = 0 ] || exit 1
+    printf '%s\t%s\t%s\n' \
+      "${FM_TEST_GH_HEAD:-0123456789abcdef0123456789abcdef01234567}" \
+      "${FM_TEST_GH_TITLE:-fixture pull request}" \
+      "${FM_TEST_GH_BODY:-fixture body}"
+    ;;
   *" headRefOid "*) printf '%s\n' "${FM_TEST_GH_HEAD:-0123456789abcdef0123456789abcdef01234567}" ;;
   *" state "*)
     [ "${FM_TEST_GH_FAIL:-0}" = 0 ] || exit 1
@@ -89,7 +96,10 @@ SH
 printf '%s\n' "$*" >> "$FM_TEST_GLAB_LOG"
 [ "${FM_TEST_GLAB_FAIL:-0}" = 0 ] || exit 1
 [ "${FM_TEST_GLAB_SLEEP:-0}" = 0 ] || sleep "$FM_TEST_GLAB_SLEEP"
-printf 'title:\tfixture merge request\nstate:\t%s\nauthor:\tsomeone\n' "${FM_TEST_GLAB_STATE:-opened}"
+printf 'title:\t%s\nstate:\t%s\nauthor:\tsomeone\n--\n%s\n' \
+  "${FM_TEST_GLAB_TITLE:-fixture merge request}" \
+  "${FM_TEST_GLAB_STATE:-opened}" \
+  "${FM_TEST_GLAB_BODY:-fixture body}"
 SH
   cat > "$fakebin/forgejo-axi" <<'SH'
 #!/usr/bin/env bash
@@ -97,7 +107,10 @@ SH
 [ "${FM_TEST_FORGEJO_AXI_FAIL:-0}" = 0 ] || exit 1
 case "${1:-} ${2:-}" in
   "pr view")
-    printf 'pull_request:\n  head_sha: %s\n' "${FM_TEST_FORGEJO_HEAD:-0123456789abcdef0123456789abcdef01234567}"
+    printf 'pull_request:\n  title: "%s"\n  body: "%s"\n  head_sha: %s\n' \
+      "${FM_TEST_FORGEJO_TITLE:-fixture pull request}" \
+      "${FM_TEST_FORGEJO_BODY:-fixture body}" \
+      "${FM_TEST_FORGEJO_HEAD:-0123456789abcdef0123456789abcdef01234567}"
     ;;
   "pr merged")
     printf 'proof:\n  merged: %s\n  head_sha: %s\n' \
@@ -124,6 +137,21 @@ write_task_meta() {
     "project=$dir/project" \
     "kind=ship" \
     "mode=no-mistakes"
+}
+
+write_orchalycious_task_meta() {
+  local dir=$1 issue_key=${2:-}
+  mkdir -p "$dir/orchalycious"
+  git init -q "$dir/orchalycious"
+  git -C "$dir/orchalycious" remote add origin git@forgejo.example:fork/repo.git
+  fm_write_meta "$dir/home/state/task-a.meta" \
+    'window=firstmate:fm-task-a' \
+    'endpoint_task_id=task-a' \
+    "worktree=$dir/wt" \
+    "project=$dir/orchalycious" \
+    'kind=ship' \
+    'mode=no-mistakes'
+  [ -z "$issue_key" ] || printf 'issue_key=%s\n' "$issue_key" >> "$dir/home/state/task-a.meta"
 }
 
 write_poll_meta() {
@@ -709,6 +737,99 @@ SH
       || fail "legacy task teardown changed the reserved migration namespace"
   done
   pass "valid direct and merge flows record exact metadata and reject multiline head metadata"
+}
+
+test_orchalycious_issue_policy_precedes_registration_and_merge() {
+  local dir url rc provider valid_title valid_body malicious_title
+  valid_title='ORC-91: guard delivery'
+  valid_body='Tracks https://linear.app/orchalycious/issue/ORC-91/guard-delivery'
+
+  for provider in github forgejo gitlab; do
+    dir=$(make_case "orc-valid-$provider")
+    write_orchalycious_task_meta "$dir" ORC-91
+    case "$provider" in
+      github)
+        url=https://github.com/o/r/pull/91
+        FM_TEST_GH_TITLE="$valid_title" FM_TEST_GH_BODY="$valid_body" \
+          run_check_entry "$dir" task-a "$url" \
+          || fail "$provider registration rejected matching Orchalycious issue fields"
+        ;;
+      forgejo)
+        url=https://forgejo.example/owner/repo/pulls/91
+        FM_TEST_FORGEJO_TITLE="$valid_title" FM_TEST_FORGEJO_BODY="$valid_body" \
+          run_check_entry "$dir" task-a "$url" \
+          || fail "$provider registration rejected matching Orchalycious issue fields"
+        ;;
+      gitlab)
+        url=https://gitlab.com/o/r/-/merge_requests/91
+        FM_TEST_GLAB_TITLE="$valid_title" FM_TEST_GLAB_BODY="$valid_body" \
+          run_check_entry "$dir" task-a "$url" \
+          || fail "$provider registration rejected matching Orchalycious issue fields"
+        ;;
+    esac
+    grep -qxF "pr=$url" "$dir/home/state/task-a.meta" \
+      || fail "$provider policy validation did not reach canonical registration"
+    fm_pr_poll_artifacts_valid "$dir/home/state" task-a "$POLL" \
+      || fail "$provider policy validation did not publish a valid poll"
+  done
+
+  dir=$(make_case orc-missing-key)
+  write_orchalycious_task_meta "$dir"
+  set +e
+  FM_TEST_GH_TITLE="$valid_title" FM_TEST_GH_BODY="$valid_body" \
+    run_check_entry "$dir" task-a https://github.com/o/r/pull/91 > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "Orchalycious registration accepted missing issue metadata"
+  assert_no_grep '^pr=' "$dir/home/state/task-a.meta" "missing issue metadata reached PR registration"
+  assert_poll_absent "$dir/home/state" task-a
+
+  dir=$(make_case orc-title-mismatch)
+  write_orchalycious_task_meta "$dir" ORC-91
+  # Keep literal shell syntax as inert provider data.
+  # shellcheck disable=SC2016
+  malicious_title='ORC-92: bad $(touch provider-field-was-executed)'
+  set +e
+  FM_TEST_GH_TITLE="$malicious_title" FM_TEST_GH_BODY="$valid_body" \
+    run_merge_entry "$dir" task-a https://github.com/o/r/pull/91 -- --merge \
+      > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "guarded merge accepted a mismatched issue title"
+  assert_contains "$(cat "$dir/stderr")" "PR title must begin with the task's Linear issue key" \
+    "title mismatch diagnostic was unclear"
+  assert_not_contains "$(cat "$dir/stderr")" 'touch provider-field-was-executed' \
+    "title mismatch leaked provider field bytes into the diagnostic"
+  [ ! -e "$dir/wt/provider-field-was-executed" ] \
+    || fail "provider title bytes executed as shell syntax"
+  [ ! -s "$dir/gh-axi.log" ] || fail "title mismatch reached the GitHub merge command"
+  assert_no_grep '^pr=' "$dir/home/state/task-a.meta" "title mismatch reached PR registration"
+  assert_poll_absent "$dir/home/state" task-a
+
+  dir=$(make_case orc-link-missing)
+  write_orchalycious_task_meta "$dir" ORC-91
+  set +e
+  FM_TEST_GH_TITLE="$valid_title" FM_TEST_GH_BODY='Wrong issue https://linear.app/orchalycious/issue/ORC-91x' \
+    run_check_entry "$dir" task-a https://github.com/o/r/pull/91 > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "Orchalycious registration accepted a missing Linear link"
+  assert_no_grep '^pr=' "$dir/home/state/task-a.meta" "missing Linear link reached PR registration"
+  assert_poll_absent "$dir/home/state" task-a
+
+  dir=$(make_case orc-provider-read-failure)
+  write_orchalycious_task_meta "$dir" ORC-91
+  set +e
+  FM_TEST_GH_VIEW_FAIL=1 run_check_entry "$dir" task-a https://github.com/o/r/pull/91 \
+    > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "Orchalycious registration accepted an unreadable provider response"
+  assert_contains "$(cat "$dir/stderr")" "could not read PR title and body" \
+    "provider read failure was not explicit"
+  assert_no_grep '^pr=' "$dir/home/state/task-a.meta" "provider read failure reached PR registration"
+  assert_poll_absent "$dir/home/state" task-a
+  pass "Orchalycious issue fields fail closed before registration and guarded merge"
 }
 
 run_watcher_bounded() {
@@ -3012,8 +3133,8 @@ $url
 forgejo.example
 owner/repo
 7" ] || fail "published Forgejo sidecar bytes were not exact"
-  grep -qxF 'pr view --base-url https://forgejo.example --repo owner/repo 7' "$dir/forgejo-axi.log" \
-    || fail "Forgejo head lookup did not use the validated base URL, repository, and pull number"
+  grep -qxF 'pr view --base-url https://forgejo.example --repo owner/repo 7 --full' "$dir/forgejo-axi.log" \
+    || fail "Forgejo field lookup did not use the validated base URL, repository, pull number, and full view"
 
   for value in false TRUE merged '' true-but-not; do
     out=$(FM_TEST_FORGEJO_MERGED="$value" run_poll "$dir")
@@ -3577,6 +3698,7 @@ test_gitlab_merged_poll_retires
 test_forgejo_merged_poll_retires
 test_invalid_entrypoints_have_zero_side_effects
 test_valid_recording_and_merge_derivation
+test_orchalycious_issue_policy_precedes_registration_and_merge
 test_rejected_metacharacter_bytes_are_inert
 test_static_poll_contract
 test_atomic_interruption_leaves_no_partial_artifact
