@@ -42,8 +42,23 @@ if [ ! -f "$META" ] || [ -L "$META" ] || [ "$(fm_pr_file_link_count "$META")" !=
   exit 1
 fi
 PROJECT=$(grep '^project=' "$META" | tail -1 | cut -d= -f2- || true)
-PROJECT_NAME=$(basename "$PROJECT")
 ISSUE_KEY=$(grep '^issue_key=' "$META" | tail -1 | cut -d= -f2- || true)
+DELIVERY_TITLE_RULE=$(grep '^delivery_title_rule=' "$META" | tail -1 | cut -d= -f2- || true)
+DELIVERY_LINK_RULE=$(grep '^delivery_link_rule=' "$META" | tail -1 | cut -d= -f2- || true)
+if [ -n "$ISSUE_KEY" ] && ! printf '%s\n' "$ISSUE_KEY" | grep -Eq '^[A-Z][A-Z0-9]*-[0-9]+$'; then
+  echo "error: task metadata carries an invalid issue key" >&2
+  exit 1
+fi
+if [ -n "$DELIVERY_TITLE_RULE" ] || [ -n "$DELIVERY_LINK_RULE" ]; then
+  if [ -z "$DELIVERY_TITLE_RULE" ] || [ -z "$DELIVERY_LINK_RULE" ] \
+    || ! fm_pr_delivery_rule_valid "$DELIVERY_TITLE_RULE" \
+    || ! fm_pr_delivery_rule_valid "$DELIVERY_LINK_RULE"; then
+      echo "error: task metadata carries an invalid delivery rule" >&2
+      exit 1
+  fi
+fi
+DELIVERY_RULE=0
+[ -z "$ISSUE_KEY" ] || [ -z "$DELIVERY_TITLE_RULE" ] || [ -z "$DELIVERY_LINK_RULE" ] || DELIVERY_RULE=1
 if [ "$PROVIDER" = forgejo ] && ! fm_pr_forgejo_project_authorized "$PROJECT" "$HOST"; then
   echo "error: Forgejo host is not authorized by the task project remotes" >&2
   exit 1
@@ -100,29 +115,23 @@ elif [ "$PROVIDER" = forgejo ]; then
   if fm_pr_head_valid "$REMOTE_HEAD"; then
     PR_HEAD=$REMOTE_HEAD
   fi
-elif [ "$PROVIDER" = gitlab ] && [ "$PROJECT_NAME" = orchalycious ]; then
+elif [ "$PROVIDER" = gitlab ] && [ "$DELIVERY_RULE" = 1 ]; then
   RAW_VIEW=$(glab mr view "$NUMBER" -R "https://$HOST/$PROJECT_PATH" 2>/dev/null) || RAW_VIEW=
   PR_TITLE=$(printf '%s\n' "$RAW_VIEW" | sed -n 's/^title:[[:space:]]*//p' | head -1)
   PR_BODY=$(printf '%s\n' "$RAW_VIEW" | sed -n '/^--$/,$p' | sed '1d')
 fi
 
-if [ "$PROJECT_NAME" = orchalycious ]; then
-  printf '%s\n' "$ISSUE_KEY" | grep -Eq '^ORC-[0-9]+$' || {
-    echo "error: task metadata does not carry the required Linear issue key" >&2
-    exit 1
-  }
+if [ "$DELIVERY_RULE" = 1 ]; then
   [ -n "$PR_TITLE" ] && [ -n "$PR_BODY" ] || {
     echo "error: could not read PR title and body for delivery validation" >&2
     exit 1
   }
-  case "$PR_TITLE" in
-    "$ISSUE_KEY: "*) ;;
-    *)
-      echo "error: PR title must begin with the task's Linear issue key followed by a colon and space" >&2
-      exit 1 ;;
-  esac
-  printf '%s\n' "$PR_BODY" | grep -Eq "https://linear\\.app/[^/[:space:])]+/issue/$ISSUE_KEY([^A-Za-z0-9-]|$)" || {
-    echo "error: PR body must link the task's Linear issue" >&2
+  fm_pr_delivery_title_matches "$PR_TITLE" "$DELIVERY_TITLE_RULE" "$ISSUE_KEY" || {
+    echo "error: PR title does not match the declared delivery rule" >&2
+    exit 1
+  }
+  fm_pr_delivery_body_links_issue "$PR_BODY" "$DELIVERY_LINK_RULE" "$ISSUE_KEY" || {
+    echo "error: PR body does not link the expected issue" >&2
     exit 1
   }
 fi

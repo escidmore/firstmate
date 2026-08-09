@@ -1231,17 +1231,6 @@ task_status_is_own_run() {  # <worktree> <axi-status-output>
   TASK_RUN_ID=$run_id
 }
 
-task_status_is_successful_terminal_run() {  # <axi-status-output> <run-id>
-  local out=$1 expected_id=$2 run_id status outcome
-  run_id=$(fm_nm_strip_quotes "$(fm_nm_field "$out" id)")
-  status=$(fm_nm_strip_quotes "$(fm_nm_field "$out" status)")
-  outcome=$(fm_nm_strip_quotes "$(fm_nm_field "$out" outcome)")
-  [ "$run_id" = "$expected_id" ] && [ "$status" = completed ] || return 1
-  case "$outcome" in
-    ''|unknown|failed|cancelled|checks-passed|commit-only|incomplete|working|running|pr-ready) return 1 ;;
-  esac
-}
-
 require_task_no_mistakes_delivery() {  # <worktree>
   local wt=$1 out branch
   [ "$KIND" = ship ] && [ "$MODE" = no-mistakes ] || return 0
@@ -1258,7 +1247,7 @@ require_task_no_mistakes_delivery() {  # <worktree>
     return 1
   fi
   if ! task_status_is_own_run "$wt" "$out" \
-    || ! task_status_is_successful_terminal_run "$out" "$TASK_RUN_ID"; then
+    || ! fm_nm_successful_terminal "$out" "$TASK_RUN_ID"; then
     echo "REFUSED: no-mistakes delivery for $ID lacks an authoritative successful terminal result." >&2
     return 1
   fi

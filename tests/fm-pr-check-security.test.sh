@@ -129,29 +129,28 @@ SH
 }
 
 write_task_meta() {
-  local dir=$1 id=${2:-task-a}
+  local dir=$1 id=${2:-task-a} mode=${3:-no-mistakes}
   fm_write_meta "$dir/home/state/$id.meta" \
     "window=firstmate:fm-$id" \
     "endpoint_task_id=$id" \
     "worktree=$dir/wt" \
     "project=$dir/project" \
     "kind=ship" \
-    "mode=no-mistakes"
+    "mode=$mode"
 }
 
-write_orchalycious_task_meta() {
-  local dir=$1 issue_key=${2:-}
-  mkdir -p "$dir/orchalycious"
-  git init -q "$dir/orchalycious"
-  git -C "$dir/orchalycious" remote add origin git@forgejo.example:fork/repo.git
+write_delivery_task_meta() {
+  local dir=$1 issue_key=${2:-} title_rule=${3:-} link_rule=${4:-}
   fm_write_meta "$dir/home/state/task-a.meta" \
     'window=firstmate:fm-task-a' \
     'endpoint_task_id=task-a' \
     "worktree=$dir/wt" \
-    "project=$dir/orchalycious" \
+    "project=$dir/project" \
     'kind=ship' \
     'mode=no-mistakes'
   [ -z "$issue_key" ] || printf 'issue_key=%s\n' "$issue_key" >> "$dir/home/state/task-a.meta"
+  [ -z "$title_rule" ] || printf 'delivery_title_rule=%s\n' "$title_rule" >> "$dir/home/state/task-a.meta"
+  [ -z "$link_rule" ] || printf 'delivery_link_rule=%s\n' "$link_rule" >> "$dir/home/state/task-a.meta"
 }
 
 write_poll_meta() {
@@ -669,7 +668,7 @@ test_valid_recording_and_merge_derivation() {
   assert_no_grep 'window=unexpected' "$dir/home/state/task-a.meta" "newline metadata key was injected"
 
   dir=$(make_case lifecycle-compatible-id)
-  write_task_meta "$dir" Task_A.1
+  write_task_meta "$dir" Task_A.1 direct-PR
   run_merge_entry "$dir" Task_A.1 https://github.com/o/r/pull/3 \
     > "$dir/stdout" 2> "$dir/stderr" \
     || fail "safe lifecycle-compatible task ID could not use the PR merge flow"
@@ -739,32 +738,32 @@ SH
   pass "valid direct and merge flows record exact metadata and reject multiline head metadata"
 }
 
-test_orchalycious_issue_policy_precedes_registration_and_merge() {
+test_declared_delivery_rule_precedes_registration_and_merge() {
   local dir url rc provider valid_title valid_body malicious_title
-  valid_title='ORC-91: guard delivery'
-  valid_body='Tracks https://linear.app/orchalycious/issue/ORC-91/guard-delivery'
+  valid_title='TASK-91:guard delivery'
+  valid_body='Tracks https://tracker.example/issue/TASK-91/guard-delivery'
 
   for provider in github forgejo gitlab; do
-    dir=$(make_case "orc-valid-$provider")
-    write_orchalycious_task_meta "$dir" ORC-91
+    dir=$(make_case "rule-valid-$provider")
+    write_delivery_task_meta "$dir" TASK-91 '{issue_key}:' 'https://tracker.example/issue/{issue_key}'
     case "$provider" in
       github)
         url=https://github.com/o/r/pull/91
         FM_TEST_GH_TITLE="$valid_title" FM_TEST_GH_BODY="$valid_body" \
           run_check_entry "$dir" task-a "$url" \
-          || fail "$provider registration rejected matching Orchalycious issue fields"
+          || fail "$provider registration rejected matching declared delivery fields"
         ;;
       forgejo)
         url=https://forgejo.example/owner/repo/pulls/91
         FM_TEST_FORGEJO_TITLE="$valid_title" FM_TEST_FORGEJO_BODY="$valid_body" \
           run_check_entry "$dir" task-a "$url" \
-          || fail "$provider registration rejected matching Orchalycious issue fields"
+          || fail "$provider registration rejected matching declared delivery fields"
         ;;
       gitlab)
         url=https://gitlab.com/o/r/-/merge_requests/91
         FM_TEST_GLAB_TITLE="$valid_title" FM_TEST_GLAB_BODY="$valid_body" \
           run_check_entry "$dir" task-a "$url" \
-          || fail "$provider registration rejected matching Orchalycious issue fields"
+          || fail "$provider registration rejected matching declared delivery fields"
         ;;
     esac
     grep -qxF "pr=$url" "$dir/home/state/task-a.meta" \
@@ -773,22 +772,30 @@ test_orchalycious_issue_policy_precedes_registration_and_merge() {
       || fail "$provider policy validation did not publish a valid poll"
   done
 
-  dir=$(make_case orc-missing-key)
-  write_orchalycious_task_meta "$dir"
+  dir=$(make_case rule-missing-key)
+  write_delivery_task_meta "$dir" '' '{issue_key}:' 'https://tracker.example/issue/{issue_key}'
   set +e
   FM_TEST_GH_TITLE="$valid_title" FM_TEST_GH_BODY="$valid_body" \
     run_check_entry "$dir" task-a https://github.com/o/r/pull/91 > "$dir/stdout" 2> "$dir/stderr"
   rc=$?
   set -e
-  [ "$rc" -ne 0 ] || fail "Orchalycious registration accepted missing issue metadata"
-  assert_no_grep '^pr=' "$dir/home/state/task-a.meta" "missing issue metadata reached PR registration"
-  assert_poll_absent "$dir/home/state" task-a
+  [ "$rc" -eq 0 ] || fail "a declared rule without an issue key should not block registration"
+  grep -q '^pr=' "$dir/home/state/task-a.meta" \
+    || fail "missing issue metadata blocked an unbound rule"
 
-  dir=$(make_case orc-title-mismatch)
-  write_orchalycious_task_meta "$dir" ORC-91
+  dir=$(make_case rule-missing-rule)
+  write_delivery_task_meta "$dir" TASK-91
+  FM_TEST_GH_TITLE='unconstrained title' FM_TEST_GH_BODY='unconstrained body' \
+    run_check_entry "$dir" task-a https://github.com/o/r/pull/91 \
+    || fail "an issue key without a declared rule should not block registration"
+  grep -q '^pr=' "$dir/home/state/task-a.meta" \
+    || fail "missing delivery rule blocked registration"
+
+  dir=$(make_case rule-title-mismatch)
+  write_delivery_task_meta "$dir" TASK-91 '{issue_key}:' 'https://tracker.example/issue/{issue_key}'
   # Keep literal shell syntax as inert provider data.
   # shellcheck disable=SC2016
-  malicious_title='ORC-92: bad $(touch provider-field-was-executed)'
+  malicious_title='TASK-92: bad $(touch provider-field-was-executed)'
   set +e
   FM_TEST_GH_TITLE="$malicious_title" FM_TEST_GH_BODY="$valid_body" \
     run_merge_entry "$dir" task-a https://github.com/o/r/pull/91 -- --merge \
@@ -796,40 +803,43 @@ test_orchalycious_issue_policy_precedes_registration_and_merge() {
   rc=$?
   set -e
   [ "$rc" -ne 0 ] || fail "guarded merge accepted a mismatched issue title"
-  assert_contains "$(cat "$dir/stderr")" "PR title must begin with the task's Linear issue key" \
+  assert_contains "$(cat "$dir/stderr")" "PR title does not match the declared delivery rule" \
     "title mismatch diagnostic was unclear"
   assert_not_contains "$(cat "$dir/stderr")" 'touch provider-field-was-executed' \
     "title mismatch leaked provider field bytes into the diagnostic"
   [ ! -e "$dir/wt/provider-field-was-executed" ] \
     || fail "provider title bytes executed as shell syntax"
   [ ! -s "$dir/gh-axi.log" ] || fail "title mismatch reached the GitHub merge command"
-  assert_no_grep '^pr=' "$dir/home/state/task-a.meta" "title mismatch reached PR registration"
+  ! grep -q '^pr=' "$dir/home/state/task-a.meta" \
+    || fail "title mismatch reached PR registration"
   assert_poll_absent "$dir/home/state" task-a
 
-  dir=$(make_case orc-link-missing)
-  write_orchalycious_task_meta "$dir" ORC-91
+  dir=$(make_case rule-link-missing)
+  write_delivery_task_meta "$dir" TASK-91 '{issue_key}:' 'https://tracker.example/issue/{issue_key}'
   set +e
-  FM_TEST_GH_TITLE="$valid_title" FM_TEST_GH_BODY='Wrong issue https://linear.app/orchalycious/issue/ORC-91x' \
+  FM_TEST_GH_TITLE="$valid_title" FM_TEST_GH_BODY='Wrong issue https://tracker.example/issue/TASK-91x' \
     run_check_entry "$dir" task-a https://github.com/o/r/pull/91 > "$dir/stdout" 2> "$dir/stderr"
   rc=$?
   set -e
-  [ "$rc" -ne 0 ] || fail "Orchalycious registration accepted a missing Linear link"
-  assert_no_grep '^pr=' "$dir/home/state/task-a.meta" "missing Linear link reached PR registration"
+  [ "$rc" -ne 0 ] || fail "registration accepted a missing declared link"
+  ! grep -q '^pr=' "$dir/home/state/task-a.meta" \
+    || fail "missing Linear link reached PR registration"
   assert_poll_absent "$dir/home/state" task-a
 
-  dir=$(make_case orc-provider-read-failure)
-  write_orchalycious_task_meta "$dir" ORC-91
+  dir=$(make_case rule-provider-read-failure)
+  write_delivery_task_meta "$dir" TASK-91 '{issue_key}:' 'https://tracker.example/issue/{issue_key}'
   set +e
   FM_TEST_GH_VIEW_FAIL=1 run_check_entry "$dir" task-a https://github.com/o/r/pull/91 \
     > "$dir/stdout" 2> "$dir/stderr"
   rc=$?
   set -e
-  [ "$rc" -ne 0 ] || fail "Orchalycious registration accepted an unreadable provider response"
+  [ "$rc" -ne 0 ] || fail "registration accepted an unreadable provider response"
   assert_contains "$(cat "$dir/stderr")" "could not read PR title and body" \
     "provider read failure was not explicit"
-  assert_no_grep '^pr=' "$dir/home/state/task-a.meta" "provider read failure reached PR registration"
+  ! grep -q '^pr=' "$dir/home/state/task-a.meta" \
+    || fail "provider read failure reached PR registration"
   assert_poll_absent "$dir/home/state" task-a
-  pass "Orchalycious issue fields fail closed before registration and guarded merge"
+  pass "declared delivery fields fail closed before registration and guarded merge"
 }
 
 run_watcher_bounded() {
@@ -3698,7 +3708,7 @@ test_gitlab_merged_poll_retires
 test_forgejo_merged_poll_retires
 test_invalid_entrypoints_have_zero_side_effects
 test_valid_recording_and_merge_derivation
-test_orchalycious_issue_policy_precedes_registration_and_merge
+test_declared_delivery_rule_precedes_registration_and_merge
 test_rejected_metacharacter_bytes_are_inert
 test_static_poll_contract
 test_atomic_interruption_leaves_no_partial_artifact

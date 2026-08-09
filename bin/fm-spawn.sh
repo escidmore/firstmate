@@ -17,8 +17,8 @@
 #   no-mistakes-prod-only is a registry policy rather than a task mode and is
 #   refused as a flag value.
 #   --issue-key carries the expected tracker key from the intake brief into task
-#   metadata. Orchalycious ship tasks require an ORC key; it is never inferred
-#   from the task id.
+#   metadata. Optional delivery title and link rules come from the brief and are
+#   carried into task metadata without being inferred from the task id.
 #        fm-spawn.sh <task-id> --relaunch [--harness <name>] [--model <name>] [--effort <level>]
 #   --relaunch launches a replacement agent for an EXISTING task into that
 #   task's own recorded endpoint and worktree instead of creating either. It is
@@ -255,6 +255,8 @@ BACKEND_ARG=
 MODE=
 YOLO=
 ISSUE_KEY=
+DELIVERY_TITLE_RULE=
+DELIVERY_LINK_RULE=
 TRACEPARENT_ARG=
 HARNESS_SET=0
 MODEL_SET=0
@@ -747,6 +749,8 @@ spawn_abort_cleanup() {
             [ -z "${MODE:-}" ] || echo "mode=$MODE"
             [ -z "${YOLO:-}" ] || echo "yolo=$YOLO"
             [ -z "${ISSUE_KEY:-}" ] || echo "issue_key=$ISSUE_KEY"
+            [ -z "${DELIVERY_TITLE_RULE:-}" ] || echo "delivery_title_rule=$DELIVERY_TITLE_RULE"
+            [ -z "${DELIVERY_LINK_RULE:-}" ] || echo "delivery_link_rule=$DELIVERY_LINK_RULE"
             echo "tasktmp=${TASK_TMP:-}"
             echo "model=${MODEL:-default}"
             echo "effort=${EFFORT:-default}"
@@ -1013,6 +1017,8 @@ if [ "$RELAUNCH" -eq 1 ]; then
   MODE=$(fm_meta_get "$RELAUNCH_META" mode)
   YOLO=$(fm_meta_get "$RELAUNCH_META" yolo)
   ISSUE_KEY=$(fm_meta_get "$RELAUNCH_META" issue_key)
+  DELIVERY_TITLE_RULE=$(fm_meta_get "$RELAUNCH_META" delivery_title_rule)
+  DELIVERY_LINK_RULE=$(fm_meta_get "$RELAUNCH_META" delivery_link_rule)
   RELAUNCH_WT=$(fm_meta_get "$RELAUNCH_META" worktree)
   [ -n "$RELAUNCH_WT" ] && [ -d "$RELAUNCH_WT" ] || {
     echo "error: task $ID's recorded worktree '${RELAUNCH_WT:-none}' is missing; refusing to relaunch without the local copy its work lives in" >&2
@@ -1603,23 +1609,34 @@ if [ "$KIND" = ship ]; then
   PROJ_NAME=$(basename "$PROJ_ABS")
   BRIEF_MODE=$(sed -n 's/^Delivery contract: mode=\([^ ]*\).*$/\1/p' "$BRIEF" | head -n 1)
   BRIEF_ISSUE_KEY=$(sed -n 's/^Delivery issue: \([^ ]*\).*$/\1/p' "$BRIEF" | head -n 1)
+  BRIEF_TITLE_RULE=$(sed -n 's/^Delivery title rule: //p' "$BRIEF" | head -n 1)
+  BRIEF_LINK_RULE=$(sed -n 's/^Delivery link rule: //p' "$BRIEF" | head -n 1)
   if [ -z "$BRIEF_MODE" ]; then
     echo "warning: $BRIEF records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode $MODE - confirm its definition of done matches" >&2
   elif [ "$BRIEF_MODE" != "$MODE" ]; then
     echo "error: delivery mismatch for $ID: the brief says mode=$BRIEF_MODE but this spawn passed --mode $MODE; correct the flag or re-scaffold the brief so the worker's instructions and the task record agree" >&2
     exit 1
   fi
-  if [ "$PROJ_NAME" = orchalycious ]; then
-    printf '%s\n' "$ISSUE_KEY" | grep -Eq '^ORC-[0-9]+$' || {
-      echo "error: Orchalycious ship tasks require an explicit ORC issue key from intake" >&2
-      exit 1
-    }
-  fi
   if [ -n "$BRIEF_ISSUE_KEY" ] || [ -n "$ISSUE_KEY" ]; then
     [ -n "$BRIEF_ISSUE_KEY" ] && [ -n "$ISSUE_KEY" ] && [ "$BRIEF_ISSUE_KEY" = "$ISSUE_KEY" ] || {
       echo "error: delivery issue mismatch for $ID: the brief and spawn must carry the same issue key" >&2
       exit 1
     }
+  fi
+  if [ -n "$BRIEF_TITLE_RULE" ] || [ -n "$BRIEF_LINK_RULE" ]; then
+    if [ -z "$BRIEF_TITLE_RULE" ] || [ -z "$BRIEF_LINK_RULE" ] \
+      || ! fm_pr_delivery_rule_valid "$BRIEF_TITLE_RULE" \
+      || ! fm_pr_delivery_rule_valid "$BRIEF_LINK_RULE"; then
+        echo "error: the brief carries an invalid delivery rule" >&2
+        exit 1
+    fi
+    if { [ -n "$DELIVERY_TITLE_RULE" ] && [ "$DELIVERY_TITLE_RULE" != "$BRIEF_TITLE_RULE" ]; } \
+      || { [ -n "$DELIVERY_LINK_RULE" ] && [ "$DELIVERY_LINK_RULE" != "$BRIEF_LINK_RULE" ]; }; then
+      echo "error: delivery rule mismatch for $ID: the brief and task record disagree" >&2
+      exit 1
+    fi
+    DELIVERY_TITLE_RULE=$BRIEF_TITLE_RULE
+    DELIVERY_LINK_RULE=$BRIEF_LINK_RULE
   fi
   # The registry holds the captain's standing posture, so dropping below it is
   # allowed (a current explicit captain instruction wins) but never silent. An
@@ -2512,7 +2529,7 @@ fi
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo issue_key tasktmp model effort busy_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo issue_key delivery_title_rule delivery_link_rule tasktmp model effort busy_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -2528,6 +2545,8 @@ preserve_relaunch_meta() {
   [ -z "$MODE" ] || echo "mode=$MODE"
   [ -z "$YOLO" ] || echo "yolo=$YOLO"
   [ -z "$ISSUE_KEY" ] || echo "issue_key=$ISSUE_KEY"
+  [ -z "$DELIVERY_TITLE_RULE" ] || echo "delivery_title_rule=$DELIVERY_TITLE_RULE"
+  [ -z "$DELIVERY_LINK_RULE" ] || echo "delivery_link_rule=$DELIVERY_LINK_RULE"
   echo "tasktmp=$TASK_TMP"
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"

@@ -338,7 +338,7 @@ test_forgejo_records_head_and_merges_ready_pull() {
     "forgejo-ready: canonical pr= was not recorded"
   assert_grep "pr_head=$head" "$case_dir/state/task-x1.meta" \
     "forgejo-ready: validated pr_head= was not recorded"
-  grep -qxF 'pr view --base-url https://forgejo.example --repo owner/repo 39' "$case_dir/forgejo-axi.log" \
+  grep -qxF 'pr view --base-url https://forgejo.example --repo owner/repo 39 --full' "$case_dir/forgejo-axi.log" \
     || fail "forgejo-ready: head lookup did not use validated identity arguments"
   grep -qxF 'pr mergeability --base-url https://forgejo.example --repo owner/repo 39' "$case_dir/forgejo-axi.log" \
     || fail "forgejo-ready: readiness check did not use validated identity arguments"

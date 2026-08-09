@@ -266,15 +266,20 @@ EOF
 }
 
 run_passed() {  # <branch>
-  cat <<EOF
+  run_terminal "$1" passed
+}
+
+run_terminal() {  # <branch> <outcome>
+local branch=$1 outcome=$2
+cat <<EOF
 run:
-  id: "01RUN"
-  branch: $1
+id: "01RUN"
+branch: $1
   status: completed
   head: "${FM_FAKE_RUN_HEAD:-abc1234}"
   pr: "https://github.com/o/r/pull/1"
-  findings: none
-outcome: passed
+findings: none
+outcome: $outcome
 EOF
 }
 
@@ -682,6 +687,19 @@ test_terminal_passed() {
   assert_contains "$out" "state: done" "passed run -> done"
   assert_contains "$out" "source: run-step" "passed -> run-step source"
   pass "terminal passed run is authoritative"
+}
+
+test_terminal_alternate_success() {
+  reset_fakes
+  local d; d=$(new_case delivered)
+  make_repo_on_branch "$d/wt" fm/feat-delivered
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-delivered.meta" "window=fm:fm-feat-delivered" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_terminal fm/feat-delivered delivered)"
+  local out; out=$(run_crew_state "$d" feat-delivered)
+  assert_contains "$out" "state: done" "alternate successful outcome -> done"
+  assert_contains "$out" "source: run-step" "alternate successful outcome -> run-step source"
+  pass "alternate successful terminal outcome is authoritative"
 }
 
 test_checks_passed_is_pr_ready_not_complete() {
@@ -1382,6 +1400,7 @@ test_ci_fixing_after_green_stays_working
 test_top_level_fixing_ci_running_after_green_stays_working
 test_top_level_fixing_done_log_stays_working
 test_terminal_passed
+test_terminal_alternate_success
 test_checks_passed_is_pr_ready_not_complete
 test_terminal_failed
 test_cross_branch_attribution_via_runs_list

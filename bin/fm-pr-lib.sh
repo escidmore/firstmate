@@ -108,6 +108,48 @@ fm_task_id_creation_valid() {
   [ "${#id}" -le 64 ]
 }
 
+fm_pr_delivery_rule_valid() {
+  local rule=${1-}
+  [ -n "$rule" ] || return 1
+  case "$rule" in
+    *$'\n'*|*$'\r'*|*"'") return 1 ;;
+  esac
+  case "$rule" in
+    *'{issue_key}'*) ;;
+    *) return 1 ;;
+  esac
+}
+
+fm_pr_delivery_rule_expand() {
+  local rule=$1 issue_key=$2
+  printf '%s' "${rule//\{issue_key\}/$issue_key}"
+}
+
+fm_pr_delivery_title_matches() {
+  local title=$1 rule=$2 issue_key=$3 expected
+  expected=$(fm_pr_delivery_rule_expand "$rule" "$issue_key")
+  case "$title" in
+    "$expected"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+fm_pr_delivery_body_links_issue() {
+  local body=$1 rule=$2 issue_key=$3 expected
+  expected=$(fm_pr_delivery_rule_expand "$rule" "$issue_key")
+  awk -v needle="$expected" '
+    {
+      rest = $0
+      while ((pos = index(rest, needle)) > 0) {
+        suffix = substr(rest, pos + length(needle))
+        if (suffix == "" || substr(suffix, 1, 1) !~ /[[:alnum:]_-]/) found = 1
+        rest = substr(rest, pos + length(needle))
+      }
+    }
+    END { exit(found ? 0 : 1) }
+  ' <<< "$body"
+}
+
 # GitLab serves self-hosted instances, so the host is part of the identity
 # rather than a constant. It is accepted only as a lowercase DNS name with no
 # userinfo, port, or trailing dot, which keeps one canonical spelling per MR.
