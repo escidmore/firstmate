@@ -117,14 +117,13 @@ fm_lock_acquire_wait "$META_LOCK"
 META_LOCK_HELD=1
 [ -f "$META" ] || { echo "error: no meta for task $ID at $META" >&2; exit 1; }
 grep -qx 'kind=scout' "$META" || { echo "error: task $ID is not a scout task (kind=scout not in meta)" >&2; exit 1; }
-PROJECT=$(fm_meta_get "$META" project)
-if [ "$(basename "$PROJECT")" = orchalycious ]; then
+PROJECT=$(grep '^project=' "$META" | tail -1 | cut -d= -f2- || true)
+if [ "$(basename "$PROJECT")" = orchalycious ] && [ -n "$ISSUE_KEY" ]; then
   printf '%s\n' "$ISSUE_KEY" | grep -Eq '^ORC-[0-9]+$' || {
-    echo "error: Orchalycious promotions require an explicit ORC issue key from intake" >&2
+    echo "error: Orchalycious promotion issue key must match ORC-<number>" >&2
     exit 1
   }
 fi
-
 TMP="$STATE/.$ID.meta.promote.${BASHPID:-$$}"
 grep -v -e '^kind=' -e '^mode=' -e '^yolo=' -e '^issue_key=' "$META" > "$TMP"
 {
@@ -145,4 +144,8 @@ case "$MODE" in
   direct-PR) SHIP_FINISH='commit, open the PR, and report its URL' ;;
   local-only) SHIP_FINISH='commit the clean local branch and report it ready for the guarded local merge' ;;
 esac
-echo "next: FM_HOME=$HOME_Q bin/fm-send.sh fm-$ID '<ship instructions for mode=$MODE: review scratch state with git status and git log; reset to a clean default-branch base; carry over only intended fix changes; create branch fm/$ID; implement; $SHIP_FINISH>'"
+ISSUE_GUIDANCE=
+if [ -n "$ISSUE_KEY" ]; then
+  ISSUE_GUIDANCE="; expected Linear issue $ISSUE_KEY; PR title must begin with ${ISSUE_KEY}: and the PR body must link https://linear.app/<workspace>/issue/$ISSUE_KEY"
+fi
+echo "next: FM_HOME=$HOME_Q bin/fm-send.sh fm-$ID '<ship instructions for mode=$MODE$ISSUE_GUIDANCE: review scratch state with git status and git log; reset to a clean default-branch base; carry over only intended fix changes; create branch fm/$ID; implement; $SHIP_FINISH>'"

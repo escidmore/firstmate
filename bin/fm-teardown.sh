@@ -93,22 +93,8 @@
 # refusal above has already passed, and BEFORE any worktree return, branch
 # delete, or backend kill below - a still-active run or a leaked process may
 # own live work in that worktree):
-#   Fix 1 - conclude the task's own no-mistakes run. A ship task's worktree can
-#     be torn down while its no-mistakes pipeline run is still PARKED at a gate
-#     (awaiting_approval/fix_review/any awaiting_agent field), with no worker
-#     left to ever answer it - the run then sits there holding a fleet slot
-#     indefinitely (observed 2026-08-03: runs parked 7h39m and parked at a
-#     post-CI approval gate after the worker was already cleaned up). A run
-#     with an autonomous step still under way (running/fixing/ci) is left
-#     alone: no-mistakes drives those against its own gate-repo clone, not the
-#     crew's worktree, so they are not orphaned by removing the worktree.
-#     conclude_task_no_mistakes_run attributes the active-or-most-recent run to
-#     THIS task only when its branch AND code identity (bin/fm-nm-run-lib.sh's
-#     fm_nm_head_matches_worktree, the same rule bin/fm-crew-state.sh uses) both
-#     match this worktree, then runs `no-mistakes axi abort --run <id>` for
-#     that verified run instance. A run already terminal
-#     (an outcome is set) or not parked at a gate is left untouched. Idempotent:
-#     an already-aborted run reads back terminal and is skipped on retry.
+#   Fix 1 - require the task's own no-mistakes run to have an authoritative
+#     successful terminal result, and require the committed work to have landed.
 #   Fix 2 - reap leaked descendant processes. A backgrounded/disowned process
 #     started under the worktree (or its per-task tasktmp) does not receive the
 #     SIGHUP/SIGTERM that closing the backend pane sends to its own foreground
@@ -1226,89 +1212,64 @@ validate_worktree_teardown_safety() {
   fi
 }
 
-# Fix 1 (see script header): does the active-or-most-recent no-mistakes run in
-# worktree $1 belong to THIS task, and is it parked at a gate awaiting an agent
-# that is about to be removed? Prints nothing; returns 0 only on a genuine
-# match so the caller knows it is safe to abort - never a guess.
+# Fix 1 (see script header): require an authoritative successful no-mistakes
+# result for this task before teardown.
 NM_TEARDOWN_TIMEOUT=${FM_TEARDOWN_NM_TIMEOUT:-10}
 case "$NM_TEARDOWN_TIMEOUT" in ''|*[!0-9]*) NM_TEARDOWN_TIMEOUT=10 ;; esac
 TASK_RUN_ID=
-task_status_is_own_parked_run() {  # <worktree> <axi-status-output>
-  local wt=$1 out=$2 branch run_id run_branch run_head status outcome awaiting has_gate
+task_status_is_own_run() {  # <worktree> <axi-status-output>
+  local wt=$1 out=$2 branch run_id run_branch run_head
   TASK_RUN_ID=
   branch=$(git -C "$wt" symbolic-ref --quiet --short HEAD 2>/dev/null) || return 1
-  [ -n "$branch" ] || return 1
-  [ -n "$out" ] || return 1
+  [ -n "$branch" ] && [ -n "$out" ] || return 1
   run_id=$(fm_nm_strip_quotes "$(fm_nm_field "$out" id)")
   [ -n "$run_id" ] || return 1
   run_branch=$(fm_nm_strip_quotes "$(fm_nm_field "$out" branch)")
-  [ -n "$run_branch" ] && [ "$run_branch" = "$branch" ] || return 1
+  [ "$run_branch" = "$branch" ] || return 1
   run_head=$(fm_nm_strip_quotes "$(fm_nm_field "$out" head)")
   fm_nm_head_matches_worktree "$wt" "$run_head" || return 1
-  outcome=$(fm_nm_strip_quotes "$(fm_nm_field "$out" outcome)")
-  [ -z "$outcome" ] || return 1
-  status=$(fm_nm_strip_quotes "$(fm_nm_field "$out" status)")
-  awaiting=$(printf '%s\n' "$out" | grep -E '^[[:space:]]*awaiting_agent:' | head -1 || true)
-  has_gate=$(printf '%s\n' "$out" | grep -Eq '^[[:space:]]*gate:[[:space:]]*' && echo 1 || echo 0)
-  case "$status" in
-    awaiting_approval|fix_review) TASK_RUN_ID=$run_id; return 0 ;;
-  esac
-  if [ -n "$awaiting" ] || [ "$has_gate" = 1 ]; then
-    TASK_RUN_ID=$run_id
-    return 0
-  fi
-  return 1
+  TASK_RUN_ID=$run_id
 }
 
-task_run_is_own_parked_run() {  # <worktree>
-  local wt=$1 out
-  # Accepted best-effort residual: query failures stay fail-open because making
-  # no-mistakes availability a prerequisite would block ship tasks with no run.
-  out=$(fm_nm_run "$wt" "$NM_TEARDOWN_TIMEOUT" axi status)
-  task_status_is_own_parked_run "$wt" "$out"
-}
-
-task_status_is_terminal_run() {  # <axi-status-output> <run-id>
-  local out=$1 expected_id=$2 run_id outcome
+task_status_is_successful_terminal_run() {  # <axi-status-output> <run-id>
+  local out=$1 expected_id=$2 run_id status outcome
   run_id=$(fm_nm_strip_quotes "$(fm_nm_field "$out" id)")
-  [ "$run_id" = "$expected_id" ] || return 1
+  status=$(fm_nm_strip_quotes "$(fm_nm_field "$out" status)")
   outcome=$(fm_nm_strip_quotes "$(fm_nm_field "$out" outcome)")
+  [ "$run_id" = "$expected_id" ] && [ "$status" = completed ] || return 1
   case "$outcome" in
-    cancelled|failed|passed|checks-passed) return 0 ;;
+    ''|unknown|failed|cancelled|checks-passed|commit-only|incomplete|working|running|pr-ready) return 1 ;;
   esac
-  return 1
 }
 
-task_status_is_run_not_found() {  # <status-error> <run-id>
-  local actual expected
-  actual=$(fm_nm_trim "$1")
-  expected=$(printf 'error: "run \\"%s\\" not found"' "$2")
-  [ "$actual" = "$expected" ]
-}
-
-# Abort THIS task's own parked no-mistakes run before the worker that would
-# have answered its gate is removed, so no run is left orphaned holding a
-# fleet slot. Only KIND=ship drives a no-mistakes validation of its own
-# worktree (scouts and secondmates never do, mirroring bin/fm-crew-state.sh);
-# a run not attributed to this exact branch+head is left completely alone.
-conclude_task_no_mistakes_run() {  # <worktree>
-  local wt=$1 out run_id
-  [ "$KIND" = ship ] || return 0
-  [ -d "$wt" ] || return 0
-  command -v no-mistakes >/dev/null 2>&1 || return 0
-  task_run_is_own_parked_run "$wt" || return 0
-  run_id=$TASK_RUN_ID
-  echo "teardown: no-mistakes run for $ID is parked at a gate; aborting before the worker is removed" >&2
-  # Accepted best-effort residual: abort supports run-id targeting but no atomic
-  # live-state condition; fully closing the resume race needs upstream compare-and-cancel.
-  fm_nm_run_checked "$wt" "$NM_TEARDOWN_TIMEOUT" axi abort --run "$run_id" >/dev/null 2>&1 || true
-  if out=$(fm_nm_run_bounded "$wt" "$NM_TEARDOWN_TIMEOUT" axi status --run "$run_id" 2>&1); then
-    task_status_is_terminal_run "$out" "$run_id" && return 0
-  elif task_status_is_run_not_found "$out" "$run_id"; then
-    return 0
+require_task_no_mistakes_delivery() {  # <worktree>
+  local wt=$1 out branch
+  [ "$KIND" = ship ] && [ "$MODE" = no-mistakes ] || return 0
+  [ -d "$wt" ] || {
+    echo "REFUSED: no-mistakes delivery for $ID has no inspectable worktree." >&2
+    return 1
+  }
+  command -v no-mistakes >/dev/null 2>&1 || {
+    echo "REFUSED: no-mistakes delivery for $ID has no authoritative run result." >&2
+    return 1
+  }
+  if ! out=$(fm_nm_run_bounded "$wt" "$NM_TEARDOWN_TIMEOUT" axi status 2>&1); then
+    echo "REFUSED: no-mistakes delivery for $ID has no authoritative terminal result." >&2
+    return 1
   fi
-  echo "REFUSED: no-mistakes run for $ID is still parked after axi abort; confirm it stopped (no-mistakes axi status) or abort it manually (no-mistakes axi abort --run <id>) before retrying teardown." >&2
-  return 1
+  if ! task_status_is_own_run "$wt" "$out" \
+    || ! task_status_is_successful_terminal_run "$out" "$TASK_RUN_ID"; then
+    echo "REFUSED: no-mistakes delivery for $ID lacks an authoritative successful terminal result." >&2
+    return 1
+  fi
+  branch=$(git -C "$wt" symbolic-ref --quiet --short HEAD 2>/dev/null) || {
+    echo "REFUSED: no-mistakes delivery for $ID has no inspectable task branch." >&2
+    return 1
+  }
+  if ! work_is_landed "$branch"; then
+    echo "REFUSED: no-mistakes delivery for $ID is not landed through its applicable PR or default branch." >&2
+    return 1
+  fi
 }
 
 # Fix 2 (see script header): pids of every process whose CURRENT WORKING
@@ -2407,7 +2368,7 @@ fi
 # dedicated process-event and firstmate-home removal machinery further below,
 # not by task-worktree cleanup.
 if [ "$KIND" != secondmate ]; then
-  conclude_task_no_mistakes_run "$WT"
+  require_task_no_mistakes_delivery "$WT"
   reap_task_worktree_processes worktree "$WT" "$TASK_TMP"
 fi
 
