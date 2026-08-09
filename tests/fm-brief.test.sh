@@ -256,8 +256,10 @@ test_ship_mode_is_explicit_not_registry() {
   brief="$home/data/brief-explicit-a5/brief.md"
   grep -qx "Delivery contract: mode=no-mistakes" "$brief" \
     || fail "registered direct-PR posture overrode the explicit --mode"
-  assert_grep "Firstmate will then instruct you to run /no-mistakes" "$brief" \
-    "explicit no-mistakes brief did not render the pipeline definition of done"
+  assert_grep "Invoke and drive the no-mistakes pipeline immediately after the implementation commit" "$brief" \
+    "explicit no-mistakes brief did not require immediate pipeline delivery"
+  assert_no_grep "The task is complete only when committed" "$brief" \
+    "no-mistakes brief still treated an implementation commit as completion"
 
   # An unregistered project is not a blocker either, because nothing is looked up.
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-explicit-a6 never-registered --mode local-only >/dev/null 2>&1 \
@@ -286,8 +288,34 @@ yolo on a ship brief|brief-refused-b1 some-proj --mode direct-PR --yolo on|--yol
 yolo=value form on a ship brief|brief-refused-b2 some-proj --mode direct-PR --yolo=off|--yolo is not a brief input
 mode on a scout brief|brief-refused-b3 some-proj --scout --mode direct-PR|--mode applies only to ship briefs
 mode on a secondmate charter|brief-refused-b4 --secondmate --no-projects --mode no-mistakes|--mode applies only to ship briefs
+issue key on a scout brief|brief-refused-b5 some-proj --scout --issue-key ORC-1|--issue-key applies only to ship briefs
 ROWS
   pass "fm-brief.sh: --yolo and scout/secondmate --mode are refused, never silently dropped"
+}
+
+test_orchalycious_issue_key_is_explicit() {
+  local home out status brief
+  home="$TMP_ROOT/orc-issue-home"
+  mkdir -p "$home/data"
+
+  out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-orc-c1 orchalycious --mode no-mistakes 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "Orchalycious brief without an issue key should be refused"
+  assert_contains "$out" "require --issue-key ORC-<number>" \
+    "missing Orchalycious issue-key refusal was unclear"
+  assert_absent "$home/data/brief-orc-c1/brief.md" \
+    "refused Orchalycious brief still wrote a file"
+
+  out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-orc-c2 orchalycious --mode no-mistakes --issue-key LLT-2 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "Orchalycious brief with a non-ORC key should be refused"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-orc-c3 orchalycious --mode no-mistakes --issue-key ORC-203 >/dev/null 2>&1 \
+    || fail "Orchalycious brief with an ORC key should scaffold"
+  brief="$home/data/brief-orc-c3/brief.md"
+  grep -qx 'Delivery issue: ORC-203' "$brief" \
+    || fail "Orchalycious brief did not record its issue key"
+  pass "fm-brief.sh: Orchalycious issue key is explicit and machine-readable"
 }
 
 test_faster_paths_use_configured_authority_without_stacked_review() {
@@ -717,6 +745,7 @@ test_ship_modes_generate_clean_briefs
 test_ship_mode_is_required_and_closed_set
 test_ship_mode_is_explicit_not_registry
 test_delivery_flags_are_refused_where_they_do_not_apply
+test_orchalycious_issue_key_is_explicit
 test_faster_paths_use_configured_authority_without_stacked_review
 test_no_mistakes_dod_wording
 test_ship_project_memory_wording

@@ -278,6 +278,19 @@ outcome: passed
 EOF
 }
 
+run_checks_passed() {  # <branch>
+  cat <<EOF
+run:
+  id: "01RUN"
+  branch: $1
+  status: completed
+  head: "${FM_FAKE_RUN_HEAD:-abc1234}"
+  pr: "https://github.com/o/r/pull/1"
+  findings: none
+outcome: checks-passed
+EOF
+}
+
 run_failed() {  # <branch>
   cat <<EOF
 run:
@@ -450,18 +463,18 @@ test_ci_ready_done_log_beats_monitoring_run() {
   printf 'done: PR https://github.com/o/r/pull/2 checks green\n' > "$d/state/feat-ci.status"
   FM_FAKE_AXI_STATUS="$(run_ci_monitoring fm/feat-ci)"
   local out; out=$(run_crew_state "$d" feat-ci)
-  assert_contains "$out" "state: done" "ci-ready status log -> done"
+  assert_contains "$out" "state: parked" "ci-ready status log -> PR-ready parked"
   assert_contains "$out" "source: status-log" "ci-ready state comes from the status log"
   assert_contains "$out" "checks green" "ci-ready detail preserves the report"
-  assert_not_contains "$out" "state: working" "ci-ready is not hidden by monitoring run"
+  assert_not_contains "$out" "state: done" "ci-ready handoff must not read as merged completion"
   pass "ci-ready status log beats monitoring run"
 }
 
 # Regression for the PR #252 incident: the crew's own status log never got a
 # "done: ... checks green" line (log_reports_ci_ready above does not apply),
 # but the ci step's log tail shows CI is actually green and only waiting on
-# merge/close. fm-crew-state must surface this as done, not "validating
-# (running)", so a green PR is never silently absorbed as still-in-progress.
+# merge/close. fm-crew-state must surface this as parked PR-ready, not merged
+# completion, so a green PR is never silently absorbed or completed early.
 test_ci_monitoring_checks_green_surfaces_done() {
   reset_fakes
   local d; d=$(new_case ci-green)
@@ -476,11 +489,11 @@ all CI checks passed - still monitoring until merged or closed
 EOF
 )
   local out; out=$(run_crew_state "$d" feat-cigreen)
-  assert_contains "$out" "state: done" "green ci-monitor run -> done"
+  assert_contains "$out" "state: parked" "green ci-monitor run -> PR-ready parked"
   assert_contains "$out" "source: run-step" "green ci-monitor -> run-step source"
   assert_contains "$out" "checks green" "green ci-monitor detail mentions checks green"
-  assert_not_contains "$out" "state: working" "green ci-monitor must not read as still validating"
-  pass "ci-monitoring run with checks already green surfaces done"
+  assert_not_contains "$out" "state: done" "green ci-monitor must not read as merged completion"
+  pass "ci-monitoring run with checks already green surfaces PR ready"
 }
 
 test_top_level_ci_checks_green_surfaces_done() {
@@ -492,10 +505,10 @@ test_top_level_ci_checks_green_surfaces_done() {
   FM_FAKE_AXI_STATUS="$(run_top_level_ci fm/feat-topcigreen)"
   FM_FAKE_CI_LOGS="all CI checks passed - still monitoring until merged or closed"
   local out; out=$(run_crew_state "$d" feat-topcigreen)
-  assert_contains "$out" "state: done" "top-level ci with green log -> done"
+  assert_contains "$out" "state: parked" "top-level ci with green log -> PR-ready parked"
   assert_contains "$out" "source: run-step" "top-level ci green -> run-step source"
   assert_contains "$out" "checks green" "top-level ci green detail mentions checks green"
-  assert_not_contains "$out" "state: working" "top-level ci green must not stay working"
+  assert_not_contains "$out" "state: done" "top-level ci green must not read as merged completion"
   pass "top-level ci status uses ci log green marker"
 }
 
@@ -508,9 +521,9 @@ test_ci_monitoring_no_checks_terminal_surfaces_done() {
   FM_FAKE_AXI_STATUS="$(run_ci_monitoring fm/feat-cinochecks)"
   FM_FAKE_CI_LOGS="no CI checks reported - still monitoring until merged or closed"
   local out; out=$(run_crew_state "$d" feat-cinochecks)
-  assert_contains "$out" "state: done" "terminal no-checks ci-monitor run -> done"
+  assert_contains "$out" "state: parked" "terminal no-checks ci-monitor run -> PR-ready parked"
   assert_contains "$out" "checks green" "terminal no-checks ci-monitor detail mentions checks green"
-  pass "terminal no-checks ci-monitor marker surfaces done"
+  pass "terminal no-checks ci-monitor marker surfaces PR ready"
 }
 
 test_ci_monitoring_green_then_rearm_stays_working() {
@@ -671,6 +684,20 @@ test_terminal_passed() {
   pass "terminal passed run is authoritative"
 }
 
+test_checks_passed_is_pr_ready_not_complete() {
+  reset_fakes
+  local d; d=$(new_case checks-passed)
+  make_repo_on_branch "$d/wt" fm/feat-checks-passed
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-checks-passed.meta" "window=fm:fm-feat-checks-passed" "worktree=$d/wt" "kind=ship" "mode=no-mistakes"
+  FM_FAKE_AXI_STATUS="$(run_checks_passed fm/feat-checks-passed)"
+  local out; out=$(run_crew_state "$d" feat-checks-passed)
+  assert_contains "$out" "state: parked" "checks-passed run -> PR-ready parked"
+  assert_contains "$out" "PR ready" "checks-passed detail names the delivery handoff"
+  assert_not_contains "$out" "state: done" "checks-passed must not read as merged completion"
+  pass "checks-passed remains PR-ready until guarded delivery passes"
+}
+
 test_terminal_failed() {
   reset_fakes
   local d; d=$(new_case failed)
@@ -754,9 +781,9 @@ EOF
 )"
   FM_FAKE_CI_LOGS="CI checks running, waiting for results..."
   local out; out=$(run_crew_state "$d" feat-coarseready)
-  assert_contains "$out" "state: done" "coarse ready status -> done"
+  assert_contains "$out" "state: parked" "coarse ready status -> PR-ready parked"
   assert_contains "$out" "source: status-log" "coarse ready status remains status-log sourced"
-  assert_not_contains "$out" "state: working" "coarse ready status must not be suppressed by another branch log"
+  assert_not_contains "$out" "state: done" "coarse ready status must not read as merged completion"
   pass "coarse run does not probe another branch's ci log"
 }
 
@@ -779,8 +806,35 @@ EOF
   local out; out=$(run_crew_state "$d" feat-g)
   assert_not_contains "$out" "source: run-step" "another branch's run not misattributed"
   assert_contains "$out" "source: status-log" "no own run -> falls back to status-log"
-  assert_contains "$out" "state: done" "falls back to the log verb"
-  pass "another branch's run is ignored, falls back"
+  assert_contains "$out" "state: working" "commit-only done remains unfinished without a matching delivery run"
+  assert_contains "$out" "no-mistakes delivery not confirmed" \
+    "commit-only fallback did not explain the missing delivery proof"
+  assert_not_contains "$out" "state: done" "commit-only done must not reconcile as completion"
+  printf 'done: PR https://github.com/o/r/pull/8 checks green\n' > "$d/state/feat-g.status"
+  out=$(run_crew_state "$d" feat-g)
+  assert_contains "$out" "state: parked" "checks-green handoff without a run remains PR-ready"
+  assert_contains "$out" "guarded merge pending" "checks-green fallback names the remaining delivery step"
+  assert_not_contains "$out" "state: done" "checks-green handoff must not reconcile as merged completion"
+  pass "another branch's run is ignored and no-mistakes handoffs remain unfinished"
+}
+
+test_faster_mode_done_log_remains_done() {
+  local mode d out
+  for mode in direct-PR local-only; do
+    reset_fakes
+    d=$(new_case "faster-done-$mode")
+    make_repo_on_branch "$d/wt" "fm/feat-$mode"
+    make_fakebin "$d" >/dev/null
+    fm_write_meta "$d/state/feat-faster.meta" "window=fm:fm-feat-faster" "worktree=$d/wt" "kind=ship" "mode=$mode" "harness=claude"
+    printf 'done: delivery handoff ready\n' > "$d/state/feat-faster.status"
+    FM_FAKE_AXI_STATUS=
+    FM_FAKE_RUNS_LIST=
+    FM_FAKE_BUSY=0
+    arm_idle_record "$d/state" feat-faster
+    out=$(run_crew_state "$d" feat-faster)
+    assert_contains "$out" "state: done" "$mode done log no longer uses its existing handoff semantics"
+  done
+  pass "direct-PR and local-only done logs retain their existing semantics"
 }
 
 # (f) no run for this crew + a busy pane -> working via pane
@@ -1328,11 +1382,13 @@ test_ci_fixing_after_green_stays_working
 test_top_level_fixing_ci_running_after_green_stays_working
 test_top_level_fixing_done_log_stays_working
 test_terminal_passed
+test_checks_passed_is_pr_ready_not_complete
 test_terminal_failed
 test_cross_branch_attribution_via_runs_list
 test_cross_branch_attribution_picks_most_recent_row
 test_coarse_run_does_not_probe_other_branch_ci_log_for_ready_status
 test_other_branch_run_ignored
+test_faster_mode_done_log_remains_done
 test_no_run_busy_pane
 test_no_run_footer_text_alone_is_not_working
 test_no_run_grok_uses_isolated_fallback

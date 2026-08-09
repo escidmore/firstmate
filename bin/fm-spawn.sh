@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
+# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--issue-key <key>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
 #        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
@@ -16,6 +16,9 @@
 #   loud one-line deviation notice is printed and the spawn continues.
 #   no-mistakes-prod-only is a registry policy rather than a task mode and is
 #   refused as a flag value.
+#   --issue-key carries the expected tracker key from the intake brief into task
+#   metadata. Orchalycious ship tasks require an ORC key; it is never inferred
+#   from the task id.
 #        fm-spawn.sh <task-id> --relaunch [--harness <name>] [--model <name>] [--effort <level>]
 #   --relaunch launches a replacement agent for an EXISTING task into that
 #   task's own recorded endpoint and worktree instead of creating either. It is
@@ -251,6 +254,7 @@ EFFORT=
 BACKEND_ARG=
 MODE=
 YOLO=
+ISSUE_KEY=
 TRACEPARENT_ARG=
 HARNESS_SET=0
 MODEL_SET=0
@@ -258,6 +262,7 @@ EFFORT_SET=0
 BACKEND_SET=0
 MODE_SET=0
 YOLO_SET=0
+ISSUE_KEY_SET=0
 TRACEPARENT_SET=0
 RELAUNCH=0
 POS=()
@@ -274,6 +279,7 @@ for a in "$@"; do
       backend) BACKEND_ARG=$a; BACKEND_SET=1 ;;
       mode) MODE=$a; MODE_SET=1 ;;
       yolo) YOLO=$a; YOLO_SET=1 ;;
+      issue-key) ISSUE_KEY=$a; ISSUE_KEY_SET=1 ;;
       traceparent) TRACEPARENT_ARG=$a; TRACEPARENT_SET=1 ;;
       *) echo "error: internal parser state for --$want_value" >&2; exit 1 ;;
     esac
@@ -296,6 +302,8 @@ for a in "$@"; do
     --mode=*) MODE=${a#--mode=}; MODE_SET=1 ;;
     --yolo) want_value=yolo ;;
     --yolo=*) YOLO=${a#--yolo=}; YOLO_SET=1 ;;
+    --issue-key) want_value=issue-key ;;
+    --issue-key=*) ISSUE_KEY=${a#--issue-key=}; ISSUE_KEY_SET=1 ;;
     --traceparent) want_value=traceparent ;;
     --traceparent=*) TRACEPARENT_ARG=${a#--traceparent=}; TRACEPARENT_SET=1 ;;
     *) POS+=("$a") ;;
@@ -308,7 +316,12 @@ done
 [ "$BACKEND_SET" -eq 0 ] || [ -n "$BACKEND_ARG" ] || { echo "error: --backend requires a non-empty value" >&2; exit 1; }
 [ "$MODE_SET" -eq 0 ] || [ -n "$MODE" ] || { echo "error: --mode requires a non-empty value" >&2; exit 1; }
 [ "$YOLO_SET" -eq 0 ] || [ -n "$YOLO" ] || { echo "error: --yolo requires a non-empty value" >&2; exit 1; }
+[ "$ISSUE_KEY_SET" -eq 0 ] || [ -n "$ISSUE_KEY" ] || { echo "error: --issue-key requires a non-empty value" >&2; exit 1; }
 [ "$TRACEPARENT_SET" -eq 0 ] || [ -n "$TRACEPARENT_ARG" ] || { echo "error: --traceparent requires a non-empty value" >&2; exit 1; }
+if [ "$ISSUE_KEY_SET" -eq 1 ] && ! printf '%s\n' "$ISSUE_KEY" | grep -Eq '^[A-Z][A-Z0-9]*-[0-9]+$'; then
+  echo "error: --issue-key must be an uppercase issue key followed by a numeric identifier" >&2
+  exit 1
+fi
 # A parent-delivered carrier replaces this home's own resolution, so it is
 # refused unless it is a secondmate spawn carrying a strictly valid W3C value.
 # Nothing else may reach the pane's TRACEPARENT export.
@@ -336,6 +349,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
   [ "$KIND_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded kind; --scout/--secondmate cannot override it" >&2; exit 1; }
   [ "$MODE_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded delivery mode; --mode cannot override it" >&2; exit 1; }
   [ "$YOLO_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded yolo posture; --yolo cannot override it" >&2; exit 1; }
+  [ "$ISSUE_KEY_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded issue key; --issue-key cannot override it" >&2; exit 1; }
 else
   # Delivery contract (AGENTS.md section 7). A ship task's mode and yolo are
   # firstmate's per-task decision, so they are required and closed-set validated
@@ -368,6 +382,10 @@ else
     }
     [ "$YOLO_SET" -eq 0 ] || {
       echo "error: --yolo applies only to ship spawns; a scout delivers a report and a secondmate records its own fixed posture" >&2
+      exit 1
+    }
+    [ "$ISSUE_KEY_SET" -eq 0 ] || {
+      echo "error: --issue-key applies only to ship spawns" >&2
       exit 1
     }
   fi
@@ -728,6 +746,7 @@ spawn_abort_cleanup() {
             echo "kind=$KIND"
             [ -z "${MODE:-}" ] || echo "mode=$MODE"
             [ -z "${YOLO:-}" ] || echo "yolo=$YOLO"
+            [ -z "${ISSUE_KEY:-}" ] || echo "issue_key=$ISSUE_KEY"
             echo "tasktmp=${TASK_TMP:-}"
             echo "model=${MODEL:-default}"
             echo "effort=${EFFORT:-default}"
@@ -845,6 +864,10 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   # spanning several modes is two invocations rather than a silent mixed dispatch.
   [ "$MODE_SET" -eq 0 ] || shared_args+=(--mode "$MODE")
   [ "$YOLO_SET" -eq 0 ] || shared_args+=(--yolo "$YOLO")
+  [ "$ISSUE_KEY_SET" -eq 0 ] || {
+    echo "error: batch dispatch does not support a shared --issue-key; spawn issue-backed tasks individually" >&2
+    exit 1
+  }
   for pair in "${POS[@]}"; do
     case "$pair" in
       *=*) : ;;
@@ -989,6 +1012,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
   [ -n "$KIND" ] || KIND=ship
   MODE=$(fm_meta_get "$RELAUNCH_META" mode)
   YOLO=$(fm_meta_get "$RELAUNCH_META" yolo)
+  ISSUE_KEY=$(fm_meta_get "$RELAUNCH_META" issue_key)
   RELAUNCH_WT=$(fm_meta_get "$RELAUNCH_META" worktree)
   [ -n "$RELAUNCH_WT" ] && [ -d "$RELAUNCH_WT" ] || {
     echo "error: task $ID's recorded worktree '${RELAUNCH_WT:-none}' is missing; refusing to relaunch without the local copy its work lives in" >&2
@@ -1573,17 +1597,30 @@ delivery_rigor_rank() {  # <mode> -> 3 (most rigor) .. 1 (least); 0 = not a task
 }
 
 # Brief/spawn delivery agreement, checked before any endpoint exists.
-# fm-brief.sh records a ship brief's mode as a fixed "Delivery contract: mode=<mode>"
-# line. A spawn that disagrees would launch a worker whose instructions and whose
-# recorded task delivery differ, which is the exact drift this contract prevents.
+# fm-brief.sh records a ship brief's mode and optional issue key as fixed lines.
+# A spawn that disagrees would launch a worker whose instructions and recorded
+# delivery differ, which is the exact drift this contract prevents.
 if [ "$KIND" = ship ]; then
   PROJ_NAME=$(basename "$PROJ_ABS")
   BRIEF_MODE=$(sed -n 's/^Delivery contract: mode=\([^ ]*\).*$/\1/p' "$BRIEF" | head -n 1)
+  BRIEF_ISSUE_KEY=$(sed -n 's/^Delivery issue: \([^ ]*\).*$/\1/p' "$BRIEF" | head -n 1)
   if [ -z "$BRIEF_MODE" ]; then
     echo "warning: $BRIEF records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode $MODE - confirm its definition of done matches" >&2
   elif [ "$BRIEF_MODE" != "$MODE" ]; then
     echo "error: delivery mismatch for $ID: the brief says mode=$BRIEF_MODE but this spawn passed --mode $MODE; correct the flag or re-scaffold the brief so the worker's instructions and the task record agree" >&2
     exit 1
+  fi
+  if [ "$PROJ_NAME" = orchalycious ]; then
+    printf '%s\n' "$ISSUE_KEY" | grep -Eq '^ORC-[0-9]+$' || {
+      echo "error: Orchalycious ship tasks require an explicit ORC issue key from intake" >&2
+      exit 1
+    }
+  fi
+  if [ -n "$BRIEF_ISSUE_KEY" ] || [ -n "$ISSUE_KEY" ]; then
+    [ -n "$BRIEF_ISSUE_KEY" ] && [ -n "$ISSUE_KEY" ] && [ "$BRIEF_ISSUE_KEY" = "$ISSUE_KEY" ] || {
+      echo "error: delivery issue mismatch for $ID: the brief and spawn must carry the same issue key" >&2
+      exit 1
+    }
   fi
   # The registry holds the captain's standing posture, so dropping below it is
   # allowed (a current explicit captain instruction wins) but never silent. An
@@ -2476,7 +2513,7 @@ fi
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo tasktmp model effort busy_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo issue_key tasktmp model effort busy_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -2491,6 +2528,7 @@ preserve_relaunch_meta() {
   echo "kind=$KIND"
   [ -z "$MODE" ] || echo "mode=$MODE"
   [ -z "$YOLO" ] || echo "yolo=$YOLO"
+  [ -z "$ISSUE_KEY" ] || echo "issue_key=$ISSUE_KEY"
   echo "tasktmp=$TASK_TMP"
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"
