@@ -245,13 +245,24 @@ test_promote_requires_and_records_the_delivery_contract() {
   [ "$status" -ne 0 ] || fail "promotion on a conditional policy should exit non-zero"
   assert_contains "$out" "classify this task's surface" "promote did not refuse the conditional policy as a task mode"
 
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" promote-d1 --mode no-mistakes --yolo on --issue-key LLT-2 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "Orchalycious promotion should reject a non-ORC issue key"
+  assert_contains "$out" "must match ORC-<number>" \
+    "promotion did not explain the provider issue-key format"
+  assert_grep 'kind=scout' "$meta" "rejected provider issue key changed the task record"
+
   out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" promote-d1 --mode no-mistakes --yolo on 2>&1)
   status=$?
-  [ "$status" -ne 0 ] || fail "Orchalycious promotion without --issue-key should exit non-zero"
-  assert_contains "$out" "require an explicit ORC issue key" \
-    "promotion did not explain the missing Orchalycious issue key"
-  assert_grep 'kind=scout' "$meta" "refused issue-less promotion still changed the task record"
+  expect_code 0 "$status" "Orchalycious promotion without --issue-key should be allowed"
+  assert_grep 'kind=ship' "$meta" "issue-less promotion did not restore ship teardown protection"
+  assert_grep 'mode=no-mistakes' "$meta" "issue-less promotion did not record the delivery mode"
+  assert_grep 'yolo=on' "$meta" "issue-less promotion did not record the approval posture"
+  assert_no_grep '^issue_key=' "$meta" "issue-less promotion invented an issue key"
+  assert_not_contains "$out" "expected Linear issue" \
+    "issue-less promotion emitted provider guidance without an issue key"
 
+  write_scout_meta
   out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" promote-d1 --mode no-mistakes --yolo on --issue-key ORC-77 2>&1)
   status=$?
   expect_code 0 "$status" "a promotion carrying its delivery contract and issue key should succeed"
@@ -264,8 +275,14 @@ test_promote_requires_and_records_the_delivery_contract() {
     "promotion hint did not require the immediate no-mistakes flow"
   assert_contains "$out" "never a commit-only done event" \
     "promotion hint still allowed commit-only completion"
+  assert_contains "$out" "expected Linear issue ORC-77" \
+    "promotion hint omitted the expected Linear issue"
+  assert_contains "$out" "PR title must begin with ORC-77:" \
+    "promotion hint omitted the issue-prefixed title requirement"
+  assert_contains "$out" "https://linear.app/<workspace>/issue/ORC-77" \
+    "promotion hint omitted the matching Linear link requirement"
   [ "$(grep -c '^mode=' "$meta")" = 1 ] || fail "promotion left more than one mode= line in the task record"
-  pass "fm-promote: promotion requires the delivery contract and records it exactly once"
+  pass "fm-promote: optional issue guidance is propagated and recorded exactly once"
 }
 
 # The registry parser survives for the mechanical consumers only. It accepts the
