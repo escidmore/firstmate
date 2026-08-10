@@ -815,6 +815,48 @@ SH
   assert_poll_absent "$state" task-a
   pass "metadata changes during provider validation fail closed before publication"
 }
+test_provider_change_refuses_before_publication() {
+  local dir state rc
+  dir=$(make_case provider-change)
+  state="$dir/home/state"
+  write_delivery_task_meta "$dir" TASK-91 '{issue_key}:' 'https://tracker.example/issue/{issue_key}'
+  cat > "$dir/fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+case " $* " in
+  *" headRefOid,title,body "*)
+    count=0
+    [ -f "${FM_TEST_GH_COUNT:-}" ] && count=$(cat "$FM_TEST_GH_COUNT")
+    count=$((count + 1))
+    printf '%s\n' "$count" > "$FM_TEST_GH_COUNT"
+    if [ "$count" -eq 1 ]; then
+      printf '%s\t%s\t%s\n' \
+        0123456789abcdef0123456789abcdef01234567 \
+        'TASK-91:guard delivery' \
+        'Tracks https://tracker.example/issue/TASK-91/guard-delivery'
+    else
+      printf '%s\t%s\t%s\n' \
+        0123456789abcdef0123456789abcdef01234567 \
+        'TASK-92:changed delivery' \
+        'Tracks https://tracker.example/issue/TASK-91/guard-delivery'
+    fi
+    ;;
+esac
+SH
+  chmod +x "$dir/fakebin/gh"
+  set +e
+  FM_TEST_GH_COUNT="$dir/gh-count" run_check_entry "$dir" task-a \
+    https://github.com/o/r/pull/91 > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "a provider edit during migration was accepted"
+  [ "$(cat "$dir/gh-count")" -eq 2 ] || fail "provider fields were not reloaded before publication"
+  assert_contains "$(cat "$dir/stderr")" "PR title does not match the declared delivery rule" \
+    "the changed provider title was not rejected"
+  ! grep -q '^pr=' "$state/task-a.meta" \
+    || fail "a changed provider title reached PR registration"
+  assert_poll_absent "$state" task-a
+  pass "provider changes during PR validation fail closed before publication"
+}
 test_migration_validates_each_canonical_task_before_rearm() {
   local dir state rc
   dir=$(make_case rule-migration-other-task)
@@ -3610,6 +3652,7 @@ test_invalid_entrypoints_have_zero_side_effects
 test_valid_recording_and_merge_derivation
 test_declared_delivery_rule_precedes_registration_and_merge
 test_metadata_change_refuses_before_publication
+test_provider_change_refuses_before_publication
 test_migration_validates_each_canonical_task_before_rearm
 test_migration_reuses_prepublication_delivery_validation
 test_rejected_metacharacter_bytes_are_inert

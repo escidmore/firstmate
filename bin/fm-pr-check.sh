@@ -57,8 +57,8 @@ validate_task_metadata_fields() {
 }
 
 validate_provider_delivery_fields() {
-  FM_PR_PROVIDER_TITLE=$PR_TITLE
-  FM_PR_PROVIDER_BODY=$PR_BODY
+FM_PR_PROVIDER_TITLE=$PR_TITLE
+FM_PR_PROVIDER_BODY=$PR_BODY
   if ! fm_pr_task_delivery_provider_fields_valid; then
     case "$FM_PR_DELIVERY_ERROR" in
       provider-fields) echo "error: could not read PR title and body for delivery validation" >&2 ;;
@@ -67,7 +67,21 @@ validate_provider_delivery_fields() {
       *) echo "error: provider delivery fields are invalid" >&2 ;;
     esac
     return 1
-  fi
+fi
+}
+
+load_and_validate_provider_fields() {
+PR_HEAD=
+PR_TITLE=
+PR_BODY=
+fm_pr_provider_fields_load "$PROVIDER" "$URL" "$HOST" "$PROJECT_PATH" "$NUMBER" "$WT" \
+  "$PROVIDER_FIELDS_REQUIRED" || return 1
+PR_TITLE=$FM_PR_PROVIDER_TITLE
+PR_BODY=$FM_PR_PROVIDER_BODY
+if fm_pr_head_valid "$FM_PR_PROVIDER_HEAD"; then
+  PR_HEAD=$FM_PR_PROVIDER_HEAD
+fi
+validate_provider_delivery_fields
 }
 
 PROVIDER_FIELDS_REQUIRED=1
@@ -101,18 +115,7 @@ fi
 # pr_head is recorded only when the forge's CLI can supply it without an extra
 # JSON dependency. GitLab records none. Teardown and review-diff tolerate that
 # omission through their content-check and local-branch fallbacks.
-PR_HEAD=
-PR_TITLE=
-PR_BODY=
-fm_pr_provider_fields_load "$PROVIDER" "$URL" "$HOST" "$PROJECT_PATH" "$NUMBER" "$WT" \
-  "$PROVIDER_FIELDS_REQUIRED" || exit 1
-PR_TITLE=$FM_PR_PROVIDER_TITLE
-PR_BODY=$FM_PR_PROVIDER_BODY
-if fm_pr_head_valid "$FM_PR_PROVIDER_HEAD"; then
-  PR_HEAD=$FM_PR_PROVIDER_HEAD
-fi
-
-validate_provider_delivery_fields || exit 1
+load_and_validate_provider_fields || exit 1
 
 META_TMP=
 META_LOCK=
@@ -149,6 +152,7 @@ validate_provider_delivery_fields || exit 1
 # migration never executes legacy artifacts and holds watcher exclusion while
 # it quarantines or rebuilds them.
 "$SCRIPT_DIR/fm-pr-check-migrate.sh" --checks-safe || exit 1
+load_and_validate_provider_fields || exit 1
 fm_pr_poll_prepare "$STATE" "$ID" "$PROVIDER" "$URL" "$HOST" "$PROJECT_PATH" "$NUMBER" "$SCRIPT_DIR/fm-pr-poll.sh" \
   || { echo "error: could not prepare PR poll" >&2; exit 1; }
 
