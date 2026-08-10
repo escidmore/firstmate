@@ -106,9 +106,11 @@ CONTROL_LOCK_HELD=0
 META_LOCK=
 META_LOCK_HELD=0
 TMP=
+BRIEF_TMP=
 promote_cleanup() {
   local status=$?
   [ -z "$TMP" ] || rm -f -- "$TMP" 2>/dev/null || true
+  [ -z "$BRIEF_TMP" ] || rm -f -- "$BRIEF_TMP" 2>/dev/null || true
   if [ "$META_LOCK_HELD" = 1 ]; then
     META_LOCK_HELD=0
     fm_lock_release "$META_LOCK" || true
@@ -133,6 +135,26 @@ fm_lock_acquire_wait "$META_LOCK"
 META_LOCK_HELD=1
 [ -f "$META" ] || { echo "error: no meta for task $ID at $META" >&2; exit 1; }
 grep -qx 'kind=scout' "$META" || { echo "error: task $ID is not a scout task (kind=scout not in meta)" >&2; exit 1; }
+BRIEF="$FM_HOME/data/$ID/brief.md"
+if [ -n "$ISSUE_KEY" ]; then
+  [ -f "$BRIEF" ] || { echo "error: issue-backed promotion requires the scout brief at $BRIEF" >&2; exit 1; }
+  BRIEF_TMP="$FM_HOME/data/$ID/.brief.promote.${BASHPID:-$$}"
+  awk -v issue_key="$ISSUE_KEY" '
+    BEGIN { line = "Delivery issue: " issue_key }
+    /^Delivery issue: / {
+      if (!seen) { print line; seen = 1 }
+      next
+    }
+    { print }
+    END { if (!seen) print line }
+  ' "$BRIEF" > "$BRIEF_TMP"
+  grep -Fx "Delivery issue: $ISSUE_KEY" "$BRIEF_TMP" >/dev/null || {
+    echo "error: could not record the issue key in $BRIEF" >&2
+    exit 1
+  }
+  mv "$BRIEF_TMP" "$BRIEF"
+  BRIEF_TMP=
+fi
 TMP="$STATE/.$ID.meta.promote.${BASHPID:-$$}"
 grep -v -e '^kind=' -e '^mode=' -e '^yolo=' -e '^issue_key=' -e '^delivery_title_rule=' -e '^delivery_link_rule=' "$META" > "$TMP"
 {

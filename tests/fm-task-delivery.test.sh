@@ -245,11 +245,15 @@ test_promote_requires_and_records_the_delivery_contract() {
   [ "$status" -ne 0 ] || fail "promotion on a conditional policy should exit non-zero"
   assert_contains "$out" "classify this task's surface" "promote did not refuse the conditional policy as a task mode"
 
+  write_brief "$home" promote-d1
   out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" promote-d1 --mode no-mistakes --yolo on --issue-key TASK-2 2>&1)
   status=$?
   expect_code 0 "$status" "promotion should accept a generic issue key"
   assert_grep 'issue_key=TASK-2' "$meta" "promotion did not record the generic issue key"
+  grep -qx 'Delivery issue: TASK-2' "$home/data/promote-d1/brief.md" \
+    || fail "promotion did not record the issue key in the scout brief"
 
+  rm -f "$home/data/promote-d1/brief.md"
   write_scout_meta
   out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" promote-d1 --mode no-mistakes --yolo on 2>&1)
   status=$?
@@ -263,6 +267,7 @@ test_promote_requires_and_records_the_delivery_contract() {
     "issue-less promotion emitted provider guidance without an issue key"
 
   write_scout_meta
+  write_brief "$home" promote-d1
   out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" promote-d1 --mode no-mistakes --yolo on \
     --issue-key TASK-77 --delivery-title-rule '{issue_key}:' \
     --delivery-link-rule 'https://tracker.example/issue/{issue_key}' 2>&1)
@@ -272,6 +277,8 @@ test_promote_requires_and_records_the_delivery_contract() {
   assert_grep 'mode=no-mistakes' "$meta" "promotion did not record the decided delivery mode"
   assert_grep 'yolo=on' "$meta" "promotion did not record the decided approval posture"
   assert_grep 'issue_key=TASK-77' "$meta" "promotion did not record the intake issue key"
+  grep -qx 'Delivery issue: TASK-77' "$home/data/promote-d1/brief.md" \
+    || fail "promotion did not record the issue key in the promoted brief"
   assert_grep 'delivery_title_rule={issue_key}:' "$meta" "promotion did not record the title rule"
   assert_grep 'delivery_link_rule=https://tracker.example/issue/{issue_key}' "$meta" "promotion did not record the link rule"
   assert_contains "$out" "ship instructions for mode=no-mistakes" "promotion hint did not carry the decided mode"
