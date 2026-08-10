@@ -41,28 +41,60 @@ if [ ! -f "$META" ] || [ -L "$META" ] || [ "$(fm_pr_file_link_count "$META")" !=
   echo "error: task metadata is unavailable" >&2
   exit 1
 fi
-PROJECT=$(grep '^project=' "$META" | tail -1 | cut -d= -f2- || true)
-ISSUE_KEY=$(grep '^issue_key=' "$META" | tail -1 | cut -d= -f2- || true)
-DELIVERY_TITLE_RULE=$(grep '^delivery_title_rule=' "$META" | tail -1 | cut -d= -f2- || true)
-DELIVERY_LINK_RULE=$(grep '^delivery_link_rule=' "$META" | tail -1 | cut -d= -f2- || true)
-if [ -n "$ISSUE_KEY" ] && ! printf '%s\n' "$ISSUE_KEY" | grep -Eq '^[A-Z][A-Z0-9]*-[0-9]+$'; then
-  echo "error: task metadata carries an invalid issue key" >&2
-  exit 1
-fi
-if [ -n "$DELIVERY_TITLE_RULE" ] || [ -n "$DELIVERY_LINK_RULE" ]; then
-  if [ -z "$DELIVERY_TITLE_RULE" ] || [ -z "$DELIVERY_LINK_RULE" ] \
-    || ! fm_pr_delivery_rule_valid "$DELIVERY_TITLE_RULE" \
-    || ! fm_pr_delivery_rule_valid "$DELIVERY_LINK_RULE"; then
-      echo "error: task metadata carries an invalid delivery rule" >&2
-      exit 1
+
+load_task_metadata_fields() {
+  PROJECT=$(grep '^project=' "$META" | tail -1 | cut -d= -f2- || true)
+  ISSUE_KEY=$(grep '^issue_key=' "$META" | tail -1 | cut -d= -f2- || true)
+  DELIVERY_TITLE_RULE=$(grep '^delivery_title_rule=' "$META" | tail -1 | cut -d= -f2- || true)
+  DELIVERY_LINK_RULE=$(grep '^delivery_link_rule=' "$META" | tail -1 | cut -d= -f2- || true)
+  WT=$(grep '^worktree=' "$META" | tail -1 | cut -d= -f2- || true)
+}
+
+validate_task_metadata_fields() {
+  if [ -n "$ISSUE_KEY" ] && ! printf '%s\n' "$ISSUE_KEY" | grep -Eq '^[A-Z][A-Z0-9]*-[0-9]+$'; then
+    echo "error: task metadata carries an invalid issue key" >&2
+    return 1
   fi
-fi
-DELIVERY_RULE=0
-[ -z "$ISSUE_KEY" ] || [ -z "$DELIVERY_TITLE_RULE" ] || [ -z "$DELIVERY_LINK_RULE" ] || DELIVERY_RULE=1
-if [ "$PROVIDER" = forgejo ] && ! fm_pr_forgejo_project_authorized "$PROJECT" "$HOST"; then
-  echo "error: Forgejo host is not authorized by the task project remotes" >&2
-  exit 1
-fi
+  if [ -n "$DELIVERY_TITLE_RULE" ] || [ -n "$DELIVERY_LINK_RULE" ]; then
+    if [ -z "$DELIVERY_TITLE_RULE" ] || [ -z "$DELIVERY_LINK_RULE" ] \
+      || ! fm_pr_delivery_rule_valid "$DELIVERY_TITLE_RULE" \
+      || ! fm_pr_delivery_rule_valid "$DELIVERY_LINK_RULE"; then
+        echo "error: task metadata carries an invalid delivery rule" >&2
+        return 1
+    fi
+  fi
+  DELIVERY_RULE=0
+  [ -z "$ISSUE_KEY" ] || [ -z "$DELIVERY_TITLE_RULE" ] || [ -z "$DELIVERY_LINK_RULE" ] || DELIVERY_RULE=1
+  if [ "$PROVIDER" = forgejo ] && ! fm_pr_forgejo_project_authorized "$PROJECT" "$HOST"; then
+    echo "error: Forgejo host is not authorized by the task project remotes" >&2
+    return 1
+  fi
+}
+
+validate_provider_delivery_fields() {
+  if [ "$DELIVERY_RULE" = 1 ]; then
+    [ -n "$PR_TITLE" ] && [ -n "$PR_BODY" ] || {
+      echo "error: could not read PR title and body for delivery validation" >&2
+      return 1
+    }
+    fm_pr_delivery_title_matches "$PR_TITLE" "$DELIVERY_TITLE_RULE" "$ISSUE_KEY" || {
+      echo "error: PR title does not match the declared delivery rule" >&2
+      return 1
+    }
+    fm_pr_delivery_body_links_issue "$PR_BODY" "$DELIVERY_LINK_RULE" "$ISSUE_KEY" || {
+      echo "error: PR body does not link the expected issue" >&2
+      return 1
+    }
+  fi
+}
+
+load_task_metadata_fields
+validate_task_metadata_fields || exit 1
+INITIAL_PROJECT=$PROJECT
+INITIAL_ISSUE_KEY=$ISSUE_KEY
+INITIAL_DELIVERY_TITLE_RULE=$DELIVERY_TITLE_RULE
+INITIAL_DELIVERY_LINK_RULE=$DELIVERY_LINK_RULE
+INITIAL_WT=$WT
 
 # A prior exact merged result may have queued its durable wake immediately
 # before interruption.
@@ -90,7 +122,6 @@ fi
 # pr_head is recorded only when the forge's CLI can supply it without an extra
 # JSON dependency. GitLab records none. Teardown and review-diff tolerate that
 # omission through their content-check and local-branch fallbacks.
-WT=$(grep '^worktree=' "$META" | tail -1 | cut -d= -f2- || true)
 PR_HEAD=
 PR_TITLE=
 PR_BODY=
@@ -136,25 +167,7 @@ elif [ "$PROVIDER" = gitlab ] && [ "$DELIVERY_RULE" = 1 ]; then
   PR_BODY=$(printf '%s\n' "$RAW_VIEW" | sed -n '/^--$/,$p' | sed '1d')
 fi
 
-if [ "$DELIVERY_RULE" = 1 ]; then
-  [ -n "$PR_TITLE" ] && [ -n "$PR_BODY" ] || {
-    echo "error: could not read PR title and body for delivery validation" >&2
-    exit 1
-  }
-  fm_pr_delivery_title_matches "$PR_TITLE" "$DELIVERY_TITLE_RULE" "$ISSUE_KEY" || {
-    echo "error: PR title does not match the declared delivery rule" >&2
-    exit 1
-  }
-  fm_pr_delivery_body_links_issue "$PR_BODY" "$DELIVERY_LINK_RULE" "$ISSUE_KEY" || {
-    echo "error: PR body does not link the expected issue" >&2
-    exit 1
-  }
-fi
-
-# Neutralize any pre-fix poll before recording or arming this task. The
-# migration never executes legacy artifacts and holds watcher exclusion while
-# it quarantines or rebuilds them.
-"$SCRIPT_DIR/fm-pr-check-migrate.sh" --checks-safe || exit 1
+validate_provider_delivery_fields || exit 1
 
 META_TMP=
 META_LOCK=
@@ -169,9 +182,6 @@ pr_check_cleanup() {
 }
 trap pr_check_cleanup EXIT
 trap 'exit 1' HUP INT TERM
-fm_pr_poll_prepare "$STATE" "$ID" "$PROVIDER" "$URL" "$HOST" "$PROJECT_PATH" "$NUMBER" "$SCRIPT_DIR/fm-pr-poll.sh" \
-  || { echo "error: could not prepare PR poll" >&2; exit 1; }
-
 META_LOCK=$(fm_meta_lock_path "$META") || exit 1
 fm_lock_acquire_wait "$META_LOCK"
 META_LOCK_HELD=1
@@ -180,6 +190,25 @@ META_LOCK_HELD=1
 META_DEVICE=$(fm_pr_file_device "$META") || exit 1
 STATE_DEVICE=$(fm_pr_file_device "$STATE") || exit 1
 [ "$META_DEVICE" = "$STATE_DEVICE" ] || { echo "error: task metadata is unavailable" >&2; exit 1; }
+load_task_metadata_fields
+validate_task_metadata_fields || exit 1
+[ "$PROJECT" = "$INITIAL_PROJECT" ] \
+  && [ "$ISSUE_KEY" = "$INITIAL_ISSUE_KEY" ] \
+  && [ "$DELIVERY_TITLE_RULE" = "$INITIAL_DELIVERY_TITLE_RULE" ] \
+  && [ "$DELIVERY_LINK_RULE" = "$INITIAL_DELIVERY_LINK_RULE" ] \
+  && [ "$WT" = "$INITIAL_WT" ] || {
+    echo "error: task metadata changed during PR validation" >&2
+    exit 1
+  }
+validate_provider_delivery_fields || exit 1
+
+# Neutralize any pre-fix poll before recording or arming this task. The
+# migration never executes legacy artifacts and holds watcher exclusion while
+# it quarantines or rebuilds them.
+"$SCRIPT_DIR/fm-pr-check-migrate.sh" --checks-safe || exit 1
+fm_pr_poll_prepare "$STATE" "$ID" "$PROVIDER" "$URL" "$HOST" "$PROJECT_PATH" "$NUMBER" "$SCRIPT_DIR/fm-pr-poll.sh" \
+  || { echo "error: could not prepare PR poll" >&2; exit 1; }
+
 META_TMP=$(mktemp "$STATE/.fm-pr-meta.XXXXXX") || exit 1
 while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in
@@ -203,11 +232,11 @@ fm_pr_metadata_identity_parse "$META" || exit 1
 [ "$FM_PR_META_PROVIDER" = "$PROVIDER" ] && [ "$FM_PR_META_URL" = "$URL" ] \
   && [ "$FM_PR_META_HOST" = "$HOST" ] && [ "$FM_PR_META_PATH" = "$PROJECT_PATH" ] \
   && [ "$FM_PR_META_NUMBER" = "$NUMBER" ] || exit 1
-fm_lock_release "$META_LOCK"
-META_LOCK_HELD=0
 
 fm_pr_poll_publish_prepared || {
   echo "error: could not publish PR poll" >&2
   exit 1
 }
+fm_lock_release "$META_LOCK"
+META_LOCK_HELD=0
 printf 'armed: state/%s.check.sh\n' "$ID"

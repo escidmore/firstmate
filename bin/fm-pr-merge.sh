@@ -70,12 +70,6 @@ if [ ! -f "$META" ] || [ -L "$META" ]; then
   echo "error: task metadata is unavailable" >&2
   exit 1
 fi
-PROJECT=$(grep '^project=' "$META" | tail -1 | cut -d= -f2- || true)
-if [ "$PROVIDER" = forgejo ] && ! fm_pr_forgejo_project_authorized "$PROJECT" "$PR_HOST"; then
-  echo "error: Forgejo host is not authorized by the task project remotes" >&2
-  exit 1
-fi
-
 "$SCRIPT_DIR/fm-pr-check.sh" "$ID" "$URL"
 grep -qxF "pr=$URL" "$META" || {
   echo "error: PR metadata recording failed" >&2
@@ -97,7 +91,10 @@ fm_pr_head_valid "$PR_HEAD" || {
   echo "error: Forgejo pull request head is unavailable" >&2
   exit 1
 }
-MERGEABILITY=$(forgejo-axi pr mergeability --base-url "https://$PR_HOST" --repo "$PR_PATH" "$PR_NUMBER") || exit 1
+MERGEABILITY=$(forgejo-axi pr mergeability --base-url "https://$PR_HOST" --repo "$PR_PATH" "$PR_NUMBER" 2>/dev/null) || {
+  echo "error: could not read Forgejo pull request mergeability" >&2
+  exit 1
+}
 READY=$(printf '%s\n' "$MERGEABILITY" | sed -n 's/^[[:space:]]*mergeable:[[:space:]]*//p' | head -1)
 READY_HEAD=$(printf '%s\n' "$MERGEABILITY" | sed -n 's/^[[:space:]]*head_sha:[[:space:]]*//p' | head -1)
 [ "$READY" = true ] && [ "$READY_HEAD" = "$PR_HEAD" ] || {
@@ -114,5 +111,8 @@ for arg in "${merge_args[@]+"${merge_args[@]}"}" "$@"; do
     *) forgejo_args+=("$arg") ;;
   esac
 done
-forgejo-axi pr merge --base-url "https://$PR_HOST" --repo "$PR_PATH" "$PR_NUMBER" \
-  --expected-head "$PR_HEAD" "${forgejo_args[@]+"${forgejo_args[@]}"}"
+if ! forgejo-axi pr merge --base-url "https://$PR_HOST" --repo "$PR_PATH" "$PR_NUMBER" \
+  --expected-head "$PR_HEAD" "${forgejo_args[@]+"${forgejo_args[@]}"}" >/dev/null 2>&1; then
+  echo "error: Forgejo pull request merge failed" >&2
+  exit 1
+fi

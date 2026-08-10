@@ -94,10 +94,19 @@ case "\${1:-} \${2:-}" in
     printf 'pull_request:\n  head_sha: %s\n' '$head'
     ;;
   "pr mergeability")
+    [ "\${FM_TEST_FORGEJO_MERGEABILITY_RC:-0}" = 0 ] || {
+      [ -z "\${FM_TEST_FORGEJO_MERGEABILITY_STDERR:-}" ] \
+        || printf '%s\n' "\${FM_TEST_FORGEJO_MERGEABILITY_STDERR:-}" >&2
+      exit "\$FM_TEST_FORGEJO_MERGEABILITY_RC"
+    }
     printf 'mergeability:\n  head_sha: %s\n  mergeable: %s\n' '$head' "\${FM_TEST_FORGEJO_MERGEABLE:-true}"
     ;;
   "pr merge")
-    [ "\${FM_TEST_FORGEJO_MERGE_RC:-0}" = 0 ] || exit "\$FM_TEST_FORGEJO_MERGE_RC"
+    [ "\${FM_TEST_FORGEJO_MERGE_RC:-0}" = 0 ] || {
+      [ -z "\${FM_TEST_FORGEJO_MERGE_STDERR:-}" ] \
+        || printf '%s\n' "\${FM_TEST_FORGEJO_MERGE_STDERR:-}" >&2
+      exit "\$FM_TEST_FORGEJO_MERGE_RC"
+    }
     printf 'proof:\n  merged: true\n  head_sha: %s\n' '$head'
     ;;
 esac
@@ -388,6 +397,49 @@ test_forgejo_server_refusal_propagates() {
   pass "fm-pr-merge propagates Forgejo server refusals such as required review"
 }
 
+test_forgejo_provider_diagnostics_are_sanitized() {
+  local case_dir rc malicious
+  # shellcheck disable=SC2016 # Provider-controlled shell syntax must remain inert.
+  malicious='provider output $(touch forgejo-provider-executed)'
+
+  case_dir=$(make_case forgejo-mergeability-diagnostic)
+  mkdir -p "$case_dir/wt"
+  add_forgejo_mock "$case_dir" cccccccccccccccccccccccccccccccccccccccc
+  set +e
+  FM_TEST_FORGEJO_MERGEABILITY_RC=1 \
+  FM_TEST_FORGEJO_MERGEABILITY_STDERR="$malicious" \
+    run_pr_merge "$case_dir" task-x1 https://forgejo.example/owner/repo/pulls/41 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "forgejo-mergeability-diagnostic: provider failure must refuse"
+  assert_grep 'error: could not read Forgejo pull request mergeability' "$case_dir/stderr" \
+    "forgejo-mergeability-diagnostic: mergeability failure was not generic"
+  assert_no_grep 'provider output' "$case_dir/stderr" \
+    "forgejo-mergeability-diagnostic: provider stderr leaked"
+  [ ! -e "$case_dir/forgejo-provider-executed" ] \
+    || fail "forgejo-mergeability-diagnostic: provider stderr executed as shell syntax"
+
+  case_dir=$(make_case forgejo-merge-diagnostic)
+  mkdir -p "$case_dir/wt"
+  add_forgejo_mock "$case_dir" dddddddddddddddddddddddddddddddddddddddd
+  set +e
+  FM_TEST_FORGEJO_MERGE_RC=1 \
+  FM_TEST_FORGEJO_MERGE_STDERR="$malicious" \
+    run_pr_merge "$case_dir" task-x1 https://forgejo.example/owner/repo/pulls/42 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "forgejo-merge-diagnostic: provider merge failure must refuse"
+  assert_grep 'error: Forgejo pull request merge failed' "$case_dir/stderr" \
+    "forgejo-merge-diagnostic: merge failure was not generic"
+  assert_no_grep 'provider output' "$case_dir/stderr" \
+    "forgejo-merge-diagnostic: provider stderr leaked"
+  [ ! -e "$case_dir/forgejo-provider-executed" ] \
+    || fail "forgejo-merge-diagnostic: provider stderr executed as shell syntax"
+  pass "Forgejo merge diagnostics contain only fixed generic errors"
+}
+
 test_forgejo_identity_overrides_refuse_before_recording() {
   local case_dir rc flag value
   for flag in --base-url --expected-head; do
@@ -448,5 +500,6 @@ test_parses_pr_url_for_gh_axi
 test_forgejo_records_head_and_merges_ready_pull
 test_forgejo_unready_pull_refuses_before_merge
 test_forgejo_server_refusal_propagates
+test_forgejo_provider_diagnostics_are_sanitized
 test_forgejo_identity_overrides_refuse_before_recording
 test_forgejo_unregistered_host_refuses_before_cli
