@@ -814,9 +814,8 @@ EOF
 
 # Is the worktree's PR merged for local work contained in that PR? Resolves the
 # PR from the recorded pr= URL first, then from the branch name, and asks GitHub
-# for both the PR state and head. Returns non-zero when the PR is not merged, the
-# current work is not contained in the PR head, no PR is found, or any gh error
-# occurs - the caller then falls back to the content check.
+# for both the PR state and head. Returns 0 when the PR is merged, 2 when
+# the provider confirms it is not merged, and 1 when no PR is found or lookup is unavailable.
 pr_is_merged() {
   local branch=$1 target view state head current
   if [ -n "$PR_URL" ]; then
@@ -831,6 +830,7 @@ pr_is_merged() {
   [ "$state" != "$view" ] || return 1
   case "$state" in
     MERGED|merged) ;;
+    OPEN|open|CLOSED|closed) return 2 ;;
     *) return 1 ;;
   esac
   [ -n "$head" ] || return 1
@@ -868,11 +868,16 @@ content_in_default() {
 # Has the worktree's committed work actually LANDED, though its commits are not
 # reachable from any remote-tracking branch? True when a merged PR proves the
 # current local work is contained in the PR head, OR the content is already in the
-# default branch (fallback, which also covers the no-PR and gh-error paths). False
-# only for genuinely unlanded work.
+# default branch when no PR applies or its lookup is unavailable. A provider-confirmed
+# open or closed PR is not landed even when the content also appears in the default branch.
 work_is_landed() {
-  local branch=$1
-  pr_is_merged "$branch" && return 0
+  local branch=$1 pr_result
+  if pr_is_merged "$branch"; then
+    return 0
+  else
+    pr_result=$?
+  fi
+  [ "$pr_result" -eq 2 ] && return 1
   content_in_default
 }
 

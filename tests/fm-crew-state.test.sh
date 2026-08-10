@@ -283,6 +283,19 @@ outcome: $outcome
 EOF
 }
 
+run_terminal_without_id() {  # <branch> <outcome>
+  local branch=$1 outcome=$2
+  cat <<EOF
+run:
+  branch: $branch
+  status: completed
+  head: "${FM_FAKE_RUN_HEAD:-abc1234}"
+  pr: "https://github.com/o/r/pull/1"
+findings: none
+outcome: $outcome
+EOF
+}
+
 run_checks_passed() {  # <branch>
   cat <<EOF
 run:
@@ -700,6 +713,19 @@ test_terminal_alternate_success() {
   assert_contains "$out" "state: done" "alternate successful outcome -> done"
   assert_contains "$out" "source: run-step" "alternate successful outcome -> run-step source"
   pass "alternate successful terminal outcome is authoritative"
+}
+
+test_terminal_missing_run_id_is_not_done() {
+  reset_fakes
+  local d; d=$(new_case missing-run-id)
+  make_repo_on_branch "$d/wt" fm/feat-missing-run-id
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-missing-run-id.meta" "window=fm:fm-feat-missing-run-id" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_terminal_without_id fm/feat-missing-run-id delivered)"
+  local out; out=$(run_crew_state "$d" feat-missing-run-id)
+  assert_contains "$out" "state: unknown" "missing run id -> unknown"
+  assert_not_contains "$out" "state: done" "missing run id must not be done"
+  pass "a terminal result without an authoritative run id is not completion"
 }
 
 test_terminal_unrecognized_outcome_is_not_done() {
@@ -1194,7 +1220,7 @@ SH
   "$ROOT/bin/fm-busy-event.sh" apply "$d/state" feat-timeout busy --gen "$gen" \
     --source claude-hook --event user-prompt-submit
   start=$SECONDS
-  out=$(FM_FAKE_NM_CALLS="$calls_file" PATH="$d/fakebin:$toolbin" FM_STATE_OVERRIDE="$d/state" FM_CREW_STATE_NM_TIMEOUT=1 "$CREW_STATE" feat-timeout)
+  out=$(BASH_ENV=/dev/null FM_FAKE_NM_CALLS="$calls_file" PATH="$d/fakebin:$toolbin" FM_STATE_OVERRIDE="$d/state" FM_CREW_STATE_NM_TIMEOUT=1 "$CREW_STATE" feat-timeout)
   elapsed=$((SECONDS - start))
   assert_contains "$out" "state: working" "timed-out no-mistakes falls back to pane"
   assert_contains "$out" "source: pane" "timed-out no-mistakes -> pane source"
@@ -1417,6 +1443,7 @@ test_top_level_fixing_ci_running_after_green_stays_working
 test_top_level_fixing_done_log_stays_working
 test_terminal_passed
 test_terminal_alternate_success
+test_terminal_missing_run_id_is_not_done
 test_terminal_unrecognized_outcome_is_not_done
 test_checks_passed_is_pr_ready_not_complete
 test_terminal_failed

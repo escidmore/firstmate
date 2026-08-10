@@ -61,6 +61,7 @@ fm_nm_successful_terminal() {  # <axi-status-output> [<run-id>]
   run_id=$(fm_nm_strip_quotes "$(fm_nm_field "$out" id)")
   status=$(fm_nm_strip_quotes "$(fm_nm_field "$out" status)")
   outcome=$(fm_nm_strip_quotes "$(fm_nm_field "$out" outcome)")
+  [ -n "$run_id" ] || return 1
   [ -z "$expected_id" ] || [ "$run_id" = "$expected_id" ] || return 1
   [ "$status" = completed ] || return 1
   case "$outcome" in

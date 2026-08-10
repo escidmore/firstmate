@@ -51,7 +51,6 @@ validate_task_metadata_fields() {
   if [ -n "$ISSUE_KEY" ] && ! printf '%s\n' "$ISSUE_KEY" | grep -Eq '^[A-Z][A-Z0-9]*-[0-9]+$'; then
     echo "error: task metadata carries an invalid issue key" >&2
     return 1
->>>>>>> c5ab34e (no-mistakes(review): Serialize PR validation and sanitize Forgejo merge errors)
   fi
   if [ -n "$DELIVERY_TITLE_RULE" ] || [ -n "$DELIVERY_LINK_RULE" ]; then
     if [ -z "$DELIVERY_TITLE_RULE" ] || [ -z "$DELIVERY_LINK_RULE" ] \
