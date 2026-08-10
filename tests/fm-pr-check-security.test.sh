@@ -665,7 +665,7 @@ SH
 }
 
 test_declared_delivery_rule_precedes_registration_and_merge() {
-  local dir url rc provider valid_title valid_body malicious_title
+  local dir state url rc provider valid_title valid_body malicious_title historical_poll before
   valid_title='TASK-91:guard delivery'
   valid_body='Tracks https://tracker.example/issue/TASK-91/guard-delivery'
 
@@ -759,6 +759,29 @@ test_declared_delivery_rule_precedes_registration_and_merge() {
   ! grep -q '^pr=' "$dir/home/state/task-a.meta" \
     || fail "provider read failure reached PR registration"
   assert_poll_absent "$dir/home/state" task-a
+
+  dir=$(make_case rule-migration-validation-order)
+  state="$dir/home/state"
+  historical_poll="$dir/historical-fm-pr-poll.sh"
+  cp "$POLL" "$historical_poll"
+  printf '\n' >> "$historical_poll"
+  chmod 0600 "$historical_poll"
+  write_delivery_task_meta "$dir" TASK-91 '{issue_key}:' 'https://tracker.example/issue/{issue_key}'
+  printf '%s\n' 'pr=https://github.com/o/r/pull/91' >> "$state/task-a.meta"
+  seed_canonical_poll "$dir" task-a https://github.com/o/r/pull/91 "$historical_poll"
+  rm -f "$state/.pr-check-migration-v1" "$state/.pr-check-migration-scan-v1"
+  before=$(state_snapshot "$state")
+  set +e
+  FM_TEST_GH_TITLE='TASK-92:guard delivery' FM_TEST_GH_BODY="$valid_body" \
+    run_check_entry "$dir" task-a https://github.com/o/r/pull/91 \
+    > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "provider validation accepted a mismatched title with a legacy poll"
+  [ "$(state_snapshot "$state")" = "$before" ] \
+    || fail "provider rejection rebuilt or armed a legacy poll"
+  [ "$(grep -c '^pr=' "$state/task-a.meta")" -eq 1 ] \
+    || fail "provider rejection recorded new PR metadata"
   pass "declared delivery fields fail closed before registration and guarded merge"
 }
 run_watcher_bounded() {
