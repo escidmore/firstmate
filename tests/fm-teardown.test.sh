@@ -839,6 +839,28 @@ test_merged_pr_with_mismatched_head_does_not_use_content_fallback() {
   pass "a merged PR whose head omits local work cannot use content fallback"
 }
 
+test_merged_pr_with_invalid_head_does_not_use_content_fallback() {
+  local case_dir rc
+  case_dir=$(make_case merged-pr-invalid-head)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt hello "add feature"
+  append_pr_meta_url "$case_dir"
+  land_on_origin_main "$case_dir" feature.txt hello
+  add_gh_pr_merged_for_head "$case_dir" HEAD
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "merged-pr-invalid-head: a merged PR without a valid head should refuse"
+  grep -q REFUSED "$case_dir/stderr" \
+    || fail "merged-pr-invalid-head: no REFUSED line in stderr"
+  [ -f "$case_dir/state/task-x1.meta" ] \
+    || fail "merged-pr-invalid-head: teardown erased task metadata"
+  pass "a merged PR without a valid head cannot use content fallback"
+}
+
 test_pr_check_does_not_refresh_stale_pr_head() {
   local case_dir rc pr_head new_head count
   case_dir=$(make_case pr-check-stale)
@@ -2642,6 +2664,7 @@ test_no_pr_recorded_discovers_merged_pr_by_branch_allows
 test_squash_merged_pr_allows_replayed_unpushed_patch
 test_merged_pr_with_later_local_commit_refuses
 test_merged_pr_with_mismatched_head_does_not_use_content_fallback
+test_merged_pr_with_invalid_head_does_not_use_content_fallback
 test_pr_check_does_not_refresh_stale_pr_head
 test_pr_check_records_remote_head_when_local_lags
 test_content_in_default_fallback_allows
