@@ -862,9 +862,9 @@ pr_is_merged() {
         OPEN|open|CLOSED|closed) return 2 ;;
         *) return 1 ;;
       esac
-      head=$(git -C "$WT" fetch --quiet origin \
-        "refs/merge-requests/$FM_PR_NUMBER/head" >/dev/null 2>&1 \
-        && git -C "$WT" rev-parse --verify FETCH_HEAD^{commit}) || return 1
+      fm_pr_provider_fields_load "$provider" "$target" "$FM_PR_HOST" "$FM_PR_PATH" \
+        "$FM_PR_NUMBER" "$WT" 1 || return 1
+      head=$FM_PR_PROVIDER_HEAD
       ;;
     *) return 1 ;;
   esac

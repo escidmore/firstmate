@@ -292,8 +292,7 @@ SH
 }
 
 add_gitlab_mr_merged_for_head() {
-  local case_dir=$1 head=$2
-  git -C "$case_dir/wt" push -q origin "$head:refs/merge-requests/7/head"
+  local case_dir=$1
   cat > "$case_dir/fakebin/glab" <<'SH'
 #!/usr/bin/env bash
 case " $* " in

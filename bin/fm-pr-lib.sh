@@ -188,10 +188,14 @@ fm_pr_provider_fields_load() {
         case "$raw_view" in *$'\n'*) raw_view= ;; esac
         if [ -n "$raw_view" ]; then
           IFS=$'\t' read -r remote_head title body <<< "$raw_view"
-          # shellcheck disable=SC2034 # Consumed by the sourceable PR-check caller.
-          FM_PR_PROVIDER_HEAD=$remote_head
-          FM_PR_PROVIDER_TITLE=$title
-          FM_PR_PROVIDER_BODY=$body
+          if printf -v remote_head '%b' "$remote_head" \
+            && printf -v title '%b' "$title" \
+            && printf -v body '%b' "$body"; then
+            # shellcheck disable=SC2034 # Consumed by the sourceable PR-check caller.
+            FM_PR_PROVIDER_HEAD=$remote_head
+            FM_PR_PROVIDER_TITLE=$title
+            FM_PR_PROVIDER_BODY=$body
+          fi
         fi
       fi
       ;;
@@ -453,12 +457,13 @@ fm_pr_regular_destination_on_device_or_absent() {
 }
 
 fm_pr_metadata_identity_parse() {
-  local file=$1 line value pr_count=0 seen_pr=0 post_pr_invalid=0
+  local file=$1 require_head=${2:-0} line value pr_count=0 seen_pr=0 post_pr_invalid=0 head_count=0
   FM_PR_META_PROVIDER=
   FM_PR_META_URL=
   FM_PR_META_HOST=
   FM_PR_META_PATH=
   FM_PR_META_NUMBER=
+  FM_PR_META_HEAD=
   [ -f "$file" ] && [ ! -L "$file" ] || return 1
   [ "$(fm_pr_file_link_count "$file")" = 1 ] || return 1
   while IFS= read -r line || [ -n "$line" ]; do
@@ -479,6 +484,8 @@ fm_pr_metadata_identity_parse() {
       pr_head=*)
         if [ "$seen_pr" -eq 1 ]; then
           value=${line#pr_head=}
+          head_count=$((head_count + 1))
+          [ "$head_count" -eq 1 ] && FM_PR_META_HEAD=$value
           fm_pr_head_valid "$value" || post_pr_invalid=1
         fi
         ;;
@@ -491,7 +498,10 @@ fm_pr_metadata_identity_parse() {
   done < "$file"
   [ "$pr_count" -eq 1 ] || return 1
   [ "$post_pr_invalid" -eq 0 ] || return 1
-  [ -n "$FM_PR_META_URL" ]
+  [ -n "$FM_PR_META_URL" ] || return 1
+  if [ "$require_head" = 1 ]; then
+    [ "$head_count" -eq 1 ] && fm_pr_head_valid "$FM_PR_META_HEAD" || return 1
+  fi
 }
 
 # Sidecar layout: provider, url, host, path, number, one per line. A sidecar
@@ -790,6 +800,7 @@ fm_pr_poll_delivery_fields_valid() {
   fm_pr_poll_artifacts_valid "$state" "$id" "$template" || return 1
   data="$state/$id.pr-poll"
   fm_pr_poll_data_parse "$data" || return 1
+  fm_pr_metadata_identity_parse "$state/$id.meta" 1 || return 1
   fm_pr_task_delivery_fields_valid "$state/$id.meta" \
     "$FM_PR_DATA_PROVIDER" "$FM_PR_DATA_URL" "$FM_PR_DATA_HOST" \
     "$FM_PR_DATA_PATH" "$FM_PR_DATA_NUMBER" 0
