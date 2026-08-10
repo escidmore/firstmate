@@ -275,6 +275,22 @@ SH
   chmod +x "$case_dir/fakebin/gh-axi" "$case_dir/fakebin/gh"
 }
 
+add_gh_pr_open_for_head() {
+  local case_dir=$1 head=$2
+  cat > "$case_dir/fakebin/gh" <<SH
+#!/usr/bin/env bash
+case "\${1:-} \${2:-}" in
+  "pr view")
+    printf '%s\t%s\n' 'OPEN' '$head'
+    exit 0
+    ;;
+esac
+echo "error: pull request not found" >&2
+exit 1
+SH
+  chmod +x "$case_dir/fakebin/gh"
+}
+
 add_forgejo_pr_merged_for_head() {
   local case_dir=$1 head=$2
   cat > "$case_dir/fakebin/forgejo-axi" <<SH
@@ -1035,6 +1051,28 @@ test_content_in_default_fallback_allows() {
   expect_code 0 "$rc" "content-landed: teardown should succeed when content is already in the default branch"
   ! grep -q REFUSED "$case_dir/stderr" || fail "content-landed: teardown printed a REFUSED line"
   pass "worktree whose content already landed in the default branch is torn down (content fallback)"
+}
+
+test_recorded_open_pr_does_not_use_content_fallback() {
+  local case_dir rc pr_head
+  case_dir=$(make_case recorded-open-pr)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt hello "add feature"
+  pr_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  git -C "$case_dir/project" fetch -q origin
+  append_pr_meta_url "$case_dir"
+  land_on_origin_main "$case_dir" feature.txt hello
+  add_gh_pr_open_for_head "$case_dir" "$pr_head"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "recorded-open-pr: an open PR should refuse even when content is in default"
+  grep -q REFUSED "$case_dir/stderr" || fail "recorded-open-pr: no REFUSED line in stderr"
+  pass "a recorded open PR cannot be satisfied by the content fallback"
 }
 
 test_content_fallback_refreshes_stale_origin_ref() {
@@ -2318,6 +2356,8 @@ test_no_mistakes_alternate_successful_outcome_allows() {
   case_dir=$(make_case nm-alternate-success)
   write_meta "$case_dir" no-mistakes ship
   land_shippable_commit "$case_dir"
+  git -C "$case_dir/project" merge -q --ff-only origin/fm/task-x1
+  git -C "$case_dir/project" push -q origin main
   head=$(git -C "$case_dir/wt" rev-parse HEAD)
   rc=0
   FM_FAKE_AXI_STATUS="$(terminal_axi_status_toon fm/task-x1 "$head" delivered)" \
@@ -2746,6 +2786,7 @@ test_merged_pr_with_later_local_commit_refuses
 test_pr_check_does_not_refresh_stale_pr_head
 test_pr_check_records_remote_head_when_local_lags
 test_content_in_default_fallback_allows
+test_recorded_open_pr_does_not_use_content_fallback
 test_content_fallback_refreshes_stale_origin_ref
 test_dirty_worktree_refuses
 test_gh_error_and_content_absent_refuses

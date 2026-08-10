@@ -143,7 +143,7 @@ elif [ "$PROVIDER" = forgejo ]; then
       match(line, /^[[:space:]]*/)
       indent = RLENGTH
       rest = substr(line, indent + 1)
-      return indent == body_indent && rest ~ /^[A-Za-z_][A-Za-z0-9_]*:[[:space:]]*/
+      return indent == body_indent && rest ~ /^head_sha:[[:space:]]*/
     }
     /^[[:space:]]*body:[[:space:]]*/ {
       match($0, /^[[:space:]]*/)

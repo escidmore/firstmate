@@ -107,10 +107,18 @@ SH
 [ "${FM_TEST_FORGEJO_AXI_FAIL:-0}" = 0 ] || exit 1
 case "${1:-} ${2:-}" in
   "pr view")
-    printf 'pull_request:\n  title: "%s"\n  body: "%s"\n  head_sha: %s\n' \
-      "${FM_TEST_FORGEJO_TITLE:-fixture pull request}" \
-      "${FM_TEST_FORGEJO_BODY:-fixture body}" \
-      "${FM_TEST_FORGEJO_HEAD:-0123456789abcdef0123456789abcdef01234567}"
+    if [ "${FM_TEST_FORGEJO_MULTILINE:-0}" = 1 ]; then
+      printf 'pull_request:\n  title: "%s"\n  body: |\n' \
+        "${FM_TEST_FORGEJO_TITLE:-fixture pull request}"
+      printf '%s\n' "${FM_TEST_FORGEJO_BODY:-fixture body}" | sed 's/^/  /'
+      printf '  head_sha: %s\n' \
+        "${FM_TEST_FORGEJO_HEAD:-0123456789abcdef0123456789abcdef01234567}"
+    else
+      printf 'pull_request:\n  title: "%s"\n  body: "%s"\n  head_sha: %s\n' \
+        "${FM_TEST_FORGEJO_TITLE:-fixture pull request}" \
+        "${FM_TEST_FORGEJO_BODY:-fixture body}" \
+        "${FM_TEST_FORGEJO_HEAD:-0123456789abcdef0123456789abcdef01234567}"
+    fi
     ;;
   "pr merged")
     printf 'proof:\n  merged: %s\n  head_sha: %s\n' \
@@ -289,7 +297,7 @@ assert_private_symlink_unchanged() {
 run_check_entry() {
   local dir=$1
   shift
-  FM_ROOT_OVERRIDE="$dir/root" FM_HOME="$dir/home" \
+  BASH_ENV=/dev/null FM_ROOT_OVERRIDE="$dir/root" FM_HOME="$dir/home" \
     FM_TEST_GUARD_LOG="$dir/guard.log" FM_TEST_GH_LOG="$dir/gh.log" \
     FM_TEST_GH_AXI_LOG="$dir/gh-axi.log" FM_TEST_GLAB_LOG="$dir/glab.log" \
     FM_TEST_FORGEJO_AXI_LOG="$dir/forgejo-axi.log" \
@@ -300,7 +308,7 @@ run_check_entry() {
 run_merge_entry() {
   local dir=$1
   shift
-  FM_ROOT_OVERRIDE="$dir/root" FM_HOME="$dir/home" \
+  BASH_ENV=/dev/null FM_ROOT_OVERRIDE="$dir/root" FM_HOME="$dir/home" \
     FM_TEST_GUARD_LOG="$dir/guard.log" FM_TEST_GH_LOG="$dir/gh.log" \
     FM_TEST_GH_AXI_LOG="$dir/gh-axi.log" FM_TEST_GLAB_LOG="$dir/glab.log" \
     FM_TEST_FORGEJO_AXI_LOG="$dir/forgejo-axi.log" \
@@ -755,8 +763,9 @@ test_declared_delivery_rule_precedes_registration_and_merge() {
         ;;
       forgejo)
         url=https://forgejo.example/owner/repo/pulls/91
+        FM_TEST_FORGEJO_MULTILINE=1 \
         FM_TEST_FORGEJO_TITLE="$valid_title" \
-        FM_TEST_FORGEJO_BODY=$'review context\n'"$valid_body" \
+        FM_TEST_FORGEJO_BODY=$'note: review context\n'"$valid_body" \
           run_check_entry "$dir" task-a "$url" \
           || fail "$provider registration rejected matching declared delivery fields"
         ;;
@@ -902,7 +911,7 @@ run_watcher_bounded() {
   local home=$1 fakebin=$2 check_interval=${FM_TEST_CHECK_INTERVAL:-0} watch_root=${FM_TEST_WATCH_ROOT:-$ROOT}
   shift 2
   perl -e 'my $pid=fork; die unless defined $pid; if (!$pid) { exec @ARGV } local $SIG{ALRM}=sub { kill "TERM", $pid; waitpid $pid, 0; exit 124 }; alarm 10; waitpid $pid, 0; alarm 0; exit($? >> 8)' \
-    env FM_HOME="$home" FM_ROOT_OVERRIDE="$watch_root" FM_CHECK_INTERVAL="$check_interval" FM_CHECK_TIMEOUT=1 \
+    env BASH_ENV=/dev/null FM_HOME="$home" FM_ROOT_OVERRIDE="$watch_root" FM_CHECK_INTERVAL="$check_interval" FM_CHECK_TIMEOUT=1 \
       FM_POLL=0.02 FM_HEARTBEAT=999999 FM_SIGNAL_GRACE=0 PATH="$fakebin:$BASE_PATH" "$WATCH" "$@"
 }
 
@@ -964,7 +973,7 @@ run_poll() {
   FM_TEST_GH_LOG="$dir/gh.log" FM_TEST_GLAB_LOG="$dir/glab.log" \
     FM_TEST_FORGEJO_AXI_LOG="$dir/forgejo-axi.log" \
     PATH="$dir/fakebin:$BASE_PATH" \
-    bash "$dir/home/state/task-a.check.sh"
+    BASH_ENV=/dev/null bash "$dir/home/state/task-a.check.sh"
 }
 
 test_static_poll_contract() {
@@ -3222,7 +3231,7 @@ owner/repo
   for host in 127.0.0.1 2130706433 0x7f000001; do
     : > "$dir/forgejo-axi.log"
     out=$(FM_TEST_FORGEJO_MERGED=true FM_TEST_FORGEJO_AXI_LOG="$dir/forgejo-axi.log" \
-      PATH="$dir/fakebin:$BASE_PATH" bash "$POLL" --validated forgejo \
+      PATH="$dir/fakebin:$BASE_PATH" BASH_ENV=/dev/null bash "$POLL" --validated forgejo \
       "https://$host/owner/repo/pulls/7" "$host" owner/repo 7 "$dir/project")
     [ -z "$out" ] || fail "Forgejo poll emitted for a numeric host"
     [ ! -s "$dir/forgejo-axi.log" ] || fail "Forgejo poll reached forgejo-axi for a numeric host"
@@ -3231,7 +3240,7 @@ owner/repo
   for host in www.github.com api.gitlab.com arbitrary.example; do
     : > "$dir/forgejo-axi.log"
     out=$(FM_TEST_FORGEJO_MERGED=true FM_TEST_FORGEJO_AXI_LOG="$dir/forgejo-axi.log" \
-      PATH="$dir/fakebin:$BASE_PATH" bash "$POLL" --validated forgejo \
+      PATH="$dir/fakebin:$BASE_PATH" BASH_ENV=/dev/null bash "$POLL" --validated forgejo \
       "https://$host/owner/repo/pulls/7" "$host" owner/repo 7 "$dir/project")
     [ -z "$out" ] || fail "Forgejo poll emitted for unauthorized host $host"
     [ ! -s "$dir/forgejo-axi.log" ] \
@@ -3277,7 +3286,7 @@ EOF
     || fail "the forgejo-axi-free search path still resolved forgejo-axi"
   write_task_meta "$dir" task-b
   set +e
-  out=$(FM_ROOT_OVERRIDE="$dir/root" FM_HOME="$dir/home" \
+  out=$(BASH_ENV=/dev/null FM_ROOT_OVERRIDE="$dir/root" FM_HOME="$dir/home" \
     FM_TEST_GUARD_LOG="$dir/guard.log" PATH="$noforgejo" \
     "$PR_CHECK" task-b "$url" 2>&1)
   rc=$?
