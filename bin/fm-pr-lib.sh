@@ -131,7 +131,7 @@ fm_pr_delivery_rule_valid() {
   local rule=${1-}
   [ -n "$rule" ] || return 1
   case "$rule" in
-    *$'\n'*|*$'\r'*|*"'") return 1 ;;
+    *$'\n'*|*$'\r'*) return 1 ;;
   esac
   case "$rule" in
     *'{issue_key}'*) ;;
