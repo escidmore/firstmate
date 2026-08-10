@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Record a PR-ready task: store one validated canonical pr=<url> and the forge's
-# exact pr_head=<sha> when available, then atomically arm a static merge poll.
+# exact pr_head=<sha>, then atomically arm a static merge poll.
 # The watcher check source is byte-for-byte bin/fm-pr-poll.sh; task and PR data
 # live only in a private sidecar and are never interpolated into shell source.
 # A GitHub pull request URL and a GitLab merge request URL are both accepted,
@@ -74,20 +74,21 @@ load_and_validate_provider_fields() {
 PR_HEAD=
 PR_TITLE=
 PR_BODY=
-fm_pr_provider_fields_load "$PROVIDER" "$URL" "$HOST" "$PROJECT_PATH" "$NUMBER" "$WT" \
-  "$PROVIDER_FIELDS_REQUIRED" || return 1
+if ! fm_pr_provider_fields_load "$PROVIDER" "$URL" "$HOST" "$PROJECT_PATH" "$NUMBER" "$WT" 1; then
+  if [ "$DELIVERY_RULE" = 1 ]; then
+    echo "error: could not read PR title and body for delivery validation" >&2
+  else
+    echo "error: provider PR head is unavailable or invalid" >&2
+  fi
+  return 1
+fi
 PR_TITLE=$FM_PR_PROVIDER_TITLE
 PR_BODY=$FM_PR_PROVIDER_BODY
-if fm_pr_head_valid "$FM_PR_PROVIDER_HEAD"; then
-  PR_HEAD=$FM_PR_PROVIDER_HEAD
-fi
+PR_HEAD=$FM_PR_PROVIDER_HEAD
 validate_provider_delivery_fields
 }
 
-PROVIDER_FIELDS_REQUIRED=1
-[ "$PROVIDER" = gitlab ] && PROVIDER_FIELDS_REQUIRED=0
 validate_task_metadata_fields || exit 1
-[ "$PROVIDER" = gitlab ] && PROVIDER_FIELDS_REQUIRED=$DELIVERY_RULE
 INITIAL_ISSUE_KEY=$ISSUE_KEY
 INITIAL_DELIVERY_TITLE_RULE=$DELIVERY_TITLE_RULE
 INITIAL_DELIVERY_LINK_RULE=$DELIVERY_LINK_RULE
@@ -112,9 +113,6 @@ fi
 
 "$FM_ROOT/bin/fm-guard.sh" || true
 
-# pr_head is recorded only when the forge's CLI can supply it without an extra
-# JSON dependency. GitLab records none. Teardown and review-diff tolerate that
-# omission through their content-check and local-branch fallbacks.
 load_and_validate_provider_fields || exit 1
 
 META_TMP=
@@ -164,7 +162,7 @@ while IFS= read -r line || [ -n "$line" ]; do
   esac
 done < "$META"
 printf 'pr=%s\n' "$URL" >> "$META_TMP" || exit 1
-[ -z "$PR_HEAD" ] || printf 'pr_head=%s\n' "$PR_HEAD" >> "$META_TMP" || exit 1
+printf 'pr_head=%s\n' "$PR_HEAD" >> "$META_TMP" || exit 1
 chmod 0600 "$META_TMP" || exit 1
 fm_pr_private_file_valid "$META_TMP" 600 "$STATE_DEVICE" || exit 1
 fm_pr_metadata_identity_parse "$META_TMP" || exit 1

@@ -36,8 +36,8 @@ Two things about plain `glab` were established by running it, because assuming e
 
 First, plain `glab` has no field selector.
 `gh` reads one field with `--json state -q .state`; `glab mr view` offers only `-F, --output string  Format output as: text, json`.
-Its JSON would need a JSON processor, and `jq` is not one of firstmate's common tools, so the state is read from glab's own field output instead.
-Only an exact `merged` wakes firstmate, so a changed output format produces no wake rather than a false merge.
+Firstmate reads the text output for title and body validation, and reads the JSON output's `sha` field for the registered source head.
+The head is accepted only when it is an exact commit hash, so a changed output format produces no registration rather than an unbound delivery record.
 
 Second, `glab` cannot take a merge request URL the way `gh pr view` can.
 That form shells out to git for the current repository, and the watcher runs in no repository:
@@ -195,6 +195,6 @@ No armed watch is lost by upgrading.
 `bin/fm-pr-merge.sh` still addresses GitHub only, by owner and repository.
 It refuses a GitLab merge request URL rather than sending it to the wrong forge, so merging a merge request stays a deliberate manual step until merge parity lands separately.
 
-A GitLab task records no `pr_head=`.
-`gh` exposes the head commit as a selectable field, while plain `glab` exposes it only inside its JSON output, which would need a JSON processor firstmate does not require.
-Both consumers already treat it as optional: `bin/fm-teardown.sh` reads the head from the forge at teardown rather than from metadata and falls back to its provider-agnostic content check, and `bin/fm-review-diff.sh` resolves the head from the remote when none is recorded.
+A GitLab task records `pr_head=` from the merge request's JSON `sha` field, and registration refuses when `glab` cannot provide a valid head.
+`bin/fm-teardown.sh` reads the current head from the provider and requires it to equal the registered head before accepting landed delivery.
+`bin/fm-review-diff.sh` still resolves the head from the remote when reviewing legacy metadata that has no recorded head.

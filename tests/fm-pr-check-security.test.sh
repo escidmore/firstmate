@@ -85,13 +85,18 @@ SH
 printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
 exit "${FM_TEST_GH_AXI_RC:-0}"
 SH
-  # Plain glab, reproducing the real CLI's contract: its field output on stdout
-  # and exit 0 on success, and a non-zero exit with no stdout on any failure.
+  # Plain glab, reproducing the real CLI's text and JSON output contracts.
   cat > "$fakebin/glab" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_TEST_GLAB_LOG"
 [ "${FM_TEST_GLAB_FAIL:-0}" = 0 ] || exit 1
 [ "${FM_TEST_GLAB_SLEEP:-0}" = 0 ] || sleep "$FM_TEST_GLAB_SLEEP"
+case " $* " in
+  *"--output json"*)
+    printf '{"sha":"%s"}\n' "${FM_TEST_GLAB_HEAD:-0123456789abcdef0123456789abcdef01234567}"
+    exit 0
+    ;;
+esac
 printf 'title:\t%s\nstate:\t%s\nauthor:\tsomeone\n--\n%s\n' \
   "${FM_TEST_GLAB_TITLE:-fixture merge request}" \
   "${FM_TEST_GLAB_STATE:-opened}" \
@@ -586,11 +591,35 @@ test_valid_recording_and_merge_derivation() {
 
   dir=$(make_case newline-head)
   write_task_meta "$dir"
+  set +e
   FM_TEST_GH_HEAD=$'0123456789abcdef0123456789abcdef01234567\nwindow=unexpected' \
     run_check_entry "$dir" task-a https://github.com/o/r/pull/2 >/dev/null 2>/dev/null \
-    || fail "valid check with malformed remote head failed"
+    ; rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "registration accepted a multiline provider head"
   assert_no_grep 'pr_head=' "$dir/home/state/task-a.meta" "multiline PR head reached metadata"
   assert_no_grep 'window=unexpected' "$dir/home/state/task-a.meta" "newline metadata key was injected"
+
+  for provider in github gitlab; do
+    dir=$(make_case "invalid-head-$provider")
+    write_task_meta "$dir"
+    set +e
+    case "$provider" in
+      github)
+        FM_TEST_GH_HEAD=not-a-commit \
+          run_check_entry "$dir" task-a https://github.com/o/r/pull/2 >/dev/null 2>/dev/null
+        ;;
+      gitlab)
+        FM_TEST_GLAB_HEAD=not-a-commit \
+          run_check_entry "$dir" task-a https://gitlab.com/o/r/-/merge_requests/2 >/dev/null 2>/dev/null
+        ;;
+    esac
+    rc=$?
+    set -e
+    [ "$rc" -ne 0 ] || fail "$provider registration accepted an invalid provider head"
+    assert_no_grep '^pr=' "$dir/home/state/task-a.meta" "$provider invalid head reached metadata"
+    assert_poll_absent "$dir/home/state" task-a
+  done
 
   dir=$(make_case lifecycle-compatible-id)
   write_task_meta "$dir" Task_A.1 direct-PR
@@ -687,6 +716,11 @@ test_declared_delivery_rule_precedes_registration_and_merge() {
     esac
     grep -qxF "pr=$url" "$dir/home/state/task-a.meta" \
       || fail "$provider policy validation did not reach canonical registration"
+    if [ "$provider" = gitlab ]; then
+      grep -qxF 'pr_head=0123456789abcdef0123456789abcdef01234567' \
+        "$dir/home/state/task-a.meta" \
+        || fail "$provider registration did not record the provider head"
+    fi
     fm_pr_poll_artifacts_valid "$dir/home/state" task-a "$POLL" \
       || fail "$provider policy validation did not publish a valid poll"
   done

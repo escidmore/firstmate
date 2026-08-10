@@ -869,7 +869,7 @@ pr_is_merged() {
     *) return 1 ;;
   esac
   fm_pr_head_valid "$head" || return 3
-  if [ -n "$PR_HEAD" ]; then
+  if [ -n "$PR_URL" ]; then
     fm_pr_head_valid "$PR_HEAD" || return 3
     [ "$PR_HEAD" = "$head" ] || return 3
   fi

@@ -296,6 +296,12 @@ add_gitlab_mr_merged_for_head() {
   git -C "$case_dir/wt" push -q origin "$head:refs/merge-requests/7/head"
   cat > "$case_dir/fakebin/glab" <<'SH'
 #!/usr/bin/env bash
+case " $* " in
+  *"--output json"*)
+    printf '{"sha":"%s"}\n' "${FM_TEST_GLAB_HEAD:?}"
+    exit 0
+    ;;
+esac
 case "${1:-} ${2:-}" in
   "mr view")
     printf '%s\n' 'title: fixture merge request' "state: ${FM_TEST_GLAB_STATE:-merged}" 'author: someone' '--' 'fixture body'
@@ -310,6 +316,11 @@ SH
 append_pr_meta_for_current_head() {
   local case_dir=$1 head
   head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  append_pr_meta_for_head "$case_dir" "$head"
+}
+
+append_pr_meta_for_head() {
+  local case_dir=$1 head=$2
   printf '%s\n' \
     'pr=https://github.com/example/repo/pull/7' \
     "pr_head=$head" >> "$case_dir/state/task-x1.meta"
@@ -317,7 +328,7 @@ append_pr_meta_for_current_head() {
 
 append_pr_meta_url() {
   local case_dir=$1
-  printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
+  append_pr_meta_for_current_head "$case_dir"
 }
 
 commit_tree_from_wt_head() {
@@ -606,7 +617,7 @@ test_teardown_prompts_tasks_axi_done_when_compatible() {
   local case_dir out
   case_dir=$(make_case tasks-axi-reminder)
   write_meta "$case_dir" no-mistakes ship
-  printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
+  append_pr_meta_for_current_head "$case_dir"
   add_gh_pr_merged_for_head "$case_dir" "$(git -C "$case_dir/wt" rev-parse HEAD)"
   add_compatible_tasks_axi "$case_dir"
 
@@ -626,7 +637,7 @@ test_teardown_manual_backend_prompts_hand_edit_even_when_tasks_axi_present() {
   local case_dir out
   case_dir=$(make_case tasks-axi-manual-optout)
   write_meta "$case_dir" no-mistakes ship
-  printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
+  append_pr_meta_for_current_head "$case_dir"
   add_gh_pr_merged_for_head "$case_dir" "$(git -C "$case_dir/wt" rev-parse HEAD)"
   printf '%s\n' manual > "$case_dir/config/backlog-backend"
   add_compatible_tasks_axi "$case_dir"
@@ -745,9 +756,9 @@ test_squash_merged_pr_allows_when_head_ancestor_of_pr_head() {
   case_dir=$(make_case squash-ancestor)
   write_meta "$case_dir" no-mistakes ship
   wt_commit_file "$case_dir" feature.txt hello "add feature"
-  append_pr_meta_url "$case_dir"
   local_head=$(git -C "$case_dir/wt" rev-parse HEAD)
   pr_head=$(commit_tree_from_wt_head "$case_dir" "$local_head" "no-mistakes follow-up")
+  append_pr_meta_for_head "$case_dir" "$pr_head"
   add_gh_pr_merged_for_head "$case_dir" "$pr_head"
 
   set +e
@@ -801,8 +812,8 @@ test_squash_merged_pr_allows_replayed_unpushed_patch() {
   git -C "$case_dir/wt" push -q origin "$parent_head:refs/heads/fm/task-x1"
   git -C "$case_dir/project" fetch -q origin fm/task-x1
   wt_commit_file "$case_dir" feature.txt hello "add feature"
-  append_pr_meta_url "$case_dir"
   pr_head=$(land_equivalent_patch_on_origin_branch "$case_dir" pr-head feature.txt hello "add feature")
+  append_pr_meta_for_head "$case_dir" "$pr_head"
   add_gh_pr_merged_for_head "$case_dir" "$pr_head"
 
   set +e
@@ -1006,12 +1017,12 @@ test_recorded_gitlab_merged_pr_requires_matching_source_head() {
   write_meta "$case_dir" no-mistakes ship
   wt_commit_file "$case_dir" feature.txt hello "add feature"
   head=$(git -C "$case_dir/wt" rev-parse HEAD)
-  printf '%s\n' 'pr=https://gitlab.example/group/project/-/merge_requests/7' \
+  printf '%s\n' 'pr=https://gitlab.example/group/project/-/merge_requests/7' "pr_head=$head" \
     >> "$case_dir/state/task-x1.meta"
   add_gitlab_mr_merged_for_head "$case_dir" "$head"
 
   set +e
-  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  FM_TEST_GLAB_HEAD=$head run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
   rc=$?
   set -e
 
@@ -1019,6 +1030,27 @@ test_recorded_gitlab_merged_pr_requires_matching_source_head() {
   ! grep -q REFUSED "$case_dir/stderr" \
     || fail "recorded-gitlab-merged-pr: teardown refused the confirmed GitLab MR"
   pass "a recorded GitLab MR lands only with merged state and matching source-head proof"
+}
+
+test_recorded_gitlab_missing_head_refuses() {
+  local case_dir rc head
+  case_dir=$(make_case recorded-gitlab-missing-head)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt hello "add feature"
+  head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  printf '%s\n' 'pr=https://gitlab.example/group/project/-/merge_requests/7' \
+    >> "$case_dir/state/task-x1.meta"
+  add_gitlab_mr_merged_for_head "$case_dir" "$head"
+
+  set +e
+  FM_TEST_GLAB_HEAD=$head run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "recorded-gitlab-missing-head: missing registration head should refuse"
+  grep -q REFUSED "$case_dir/stderr" \
+    || fail "recorded-gitlab-missing-head: no REFUSED line in stderr"
+  pass "a recorded GitLab MR without a registered head cannot land"
 }
 
 test_recorded_pr_lookup_error_does_not_use_content_fallback() {
@@ -1063,11 +1095,11 @@ test_dirty_worktree_refuses() {
   local case_dir rc pr_head
   case_dir=$(make_case dirty-wt)
   write_meta "$case_dir" no-mistakes ship
-  printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
   # The committed work has fully landed (merged PR + content in default), but an
   # uncommitted edit remains. Dirtiness must refuse regardless: the reset would
   # discard those changes.
   wt_commit_file "$case_dir" feature.txt hello "add feature"
+  append_pr_meta_for_current_head "$case_dir"
   land_on_origin_main "$case_dir" feature.txt hello
   pr_head=$(git -C "$case_dir/wt" rev-parse HEAD)
   add_gh_pr_merged_for_head "$case_dir" "$pr_head"
@@ -1088,10 +1120,10 @@ test_gh_error_and_content_absent_refuses() {
   local case_dir rc
   case_dir=$(make_case gh-error)
   write_meta "$case_dir" no-mistakes ship
-  printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
   # Real content not pushed, the PR lookup errors, and origin/main never gained the
   # content. The fail-safe must refuse rather than allow on a transient gh failure.
   wt_commit_file "$case_dir" feature.txt hello "add feature"
+  append_pr_meta_for_current_head "$case_dir"
   add_gh_axi_error "$case_dir"
 
   set +e
@@ -2771,6 +2803,7 @@ test_pr_check_records_remote_head_when_local_lags
 test_content_in_default_fallback_allows
 test_recorded_open_pr_does_not_use_content_fallback
 test_recorded_gitlab_merged_pr_requires_matching_source_head
+test_recorded_gitlab_missing_head_refuses
 test_recorded_pr_lookup_error_does_not_use_content_fallback
 test_content_fallback_refreshes_stale_origin_ref
 test_dirty_worktree_refuses

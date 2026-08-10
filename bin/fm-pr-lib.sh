@@ -172,15 +172,19 @@ fm_pr_delivery_body_links_issue() {
 
 fm_pr_provider_fields_load() {
   local provider=$1 url=$2 host=$3 path=$4 number=$5 worktree=$6 required=${7:-1}
-  local raw_view remote_head title body
+  local raw_view remote_head title body json_view
   FM_PR_PROVIDER_HEAD=
   FM_PR_PROVIDER_TITLE=
   FM_PR_PROVIDER_BODY=
   [ "$required" = 1 ] || return 0
   case "$provider" in
     github)
-      if [ -n "$worktree" ] && [ -d "$worktree" ] && command -v gh >/dev/null 2>&1; then
-        raw_view=$(cd "$worktree" && gh pr view "$url" --json headRefOid,title,body --jq '[.headRefOid, .title, .body] | @tsv' 2>/dev/null) || raw_view=
+      if command -v gh >/dev/null 2>&1; then
+        if [ -n "$worktree" ] && [ -d "$worktree" ]; then
+          raw_view=$(cd "$worktree" && gh pr view "$url" --json headRefOid,title,body --jq '[.headRefOid, .title, .body] | @tsv' 2>/dev/null) || raw_view=
+        else
+          raw_view=$(gh pr view "$url" --json headRefOid,title,body --jq '[.headRefOid, .title, .body] | @tsv' 2>/dev/null) || raw_view=
+        fi
         case "$raw_view" in *$'\n'*) raw_view= ;; esac
         if [ -n "$raw_view" ]; then
           IFS=$'\t' read -r remote_head title body <<< "$raw_view"
@@ -195,11 +199,16 @@ fm_pr_provider_fields_load() {
       raw_view=$(glab mr view "$number" -R "https://$host/$path" 2>/dev/null) || raw_view=
       title=$(printf '%s\n' "$raw_view" | sed -n 's/^title:[[:space:]]*//p' | head -1)
       body=$(printf '%s\n' "$raw_view" | sed -n '/^--$/,$p' | sed '1d')
+      json_view=$(glab mr view "$number" -R "https://$host/$path" --output json 2>/dev/null) || json_view=
+      FM_PR_PROVIDER_HEAD=$(printf '%s\n' "$json_view" \
+        | sed -n 's/.*"sha"[[:space:]]*:[[:space:]]*"\([0-9a-f][0-9a-f]*\)".*/\1/p' \
+        | head -1)
       FM_PR_PROVIDER_TITLE=$title
       FM_PR_PROVIDER_BODY=$body
       ;;
     *) return 1 ;;
   esac
+  fm_pr_head_valid "$FM_PR_PROVIDER_HEAD" || return 1
 }
 
 fm_pr_task_delivery_metadata_valid() {

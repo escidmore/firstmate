@@ -189,4 +189,8 @@ if [ -n "$ISSUE_KEY" ]; then
   fi
 fi
 INSTRUCTION="<ship instructions for mode=$MODE$ISSUE_GUIDANCE: review scratch state with git status and git log; reset to a clean default-branch base; carry over only intended fix changes; create branch fm/$ID; implement; $SHIP_FINISH>"
-echo "next: FM_HOME=$HOME_Q bin/fm-send.sh fm-$ID '$INSTRUCTION'"
+case "$INSTRUCTION" in
+  *"'"*) INSTRUCTION_Q=$(printf '%q' "$INSTRUCTION") ;;
+  *) INSTRUCTION_Q="'$INSTRUCTION'" ;;
+esac
+echo "next: FM_HOME=$HOME_Q bin/fm-send.sh fm-$ID $INSTRUCTION_Q"

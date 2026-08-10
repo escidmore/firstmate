@@ -315,6 +315,35 @@ test_promote_requires_and_records_the_delivery_contract() {
   pass "fm-promote: optional issue guidance is propagated and recorded exactly once"
 }
 
+test_promotion_handoff_shell_quotes_opaque_issue_key() {
+  local dir home meta out next capture
+  dir="$TMP_ROOT/promotion-handoff-quote"
+  home="$dir/home"
+  meta="$home/state/promote-quoted.meta"
+  mkdir -p "$home/state" "$home/data/promote-quoted" "$dir/bin"
+  printf 'window=fm-promote-quoted\nkind=scout\nworktree=/tmp/wt\nproject=/tmp/fixture-project\n' > "$meta"
+  printf 'You are a crewmate.\n' > "$home/data/promote-quoted/brief.md"
+  cat > "$dir/bin/fm-send.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$#" > "$FM_CAPTURE"
+printf '%s\n' "$2" >> "$FM_CAPTURE"
+SH
+  chmod +x "$dir/bin/fm-send.sh"
+
+  out=$(cd "$dir" && FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
+    "$PROMOTE" promote-quoted --mode direct-PR --yolo on --issue-key "O'Reilly/42" 2>&1)
+  next=$(printf '%s\n' "$out" | sed -n 's/^next: //p')
+  [ -n "$next" ] || fail "promotion did not emit a handoff command"
+  capture="$dir/capture"
+  (cd "$dir" && FM_CAPTURE="$capture" bash -c "$next") \
+    || fail "shell-quoted promotion handoff could not execute"
+  [ "$(sed -n '1p' "$capture")" = 2 ] \
+    || fail "promotion handoff split the opaque instruction into multiple arguments"
+  grep -qxF "<ship instructions for mode=direct-PR; expected issue O'Reilly/42: review scratch state with git status and git log; reset to a clean default-branch base; carry over only intended fix changes; create branch fm/promote-quoted; implement; commit, open the PR, and report its URL>" \
+    "$capture" || fail "promotion handoff changed the opaque issue key"
+  pass "fm-promote shell-quotes opaque issue-bearing handoffs"
+}
+
 # The registry parser survives for the mechanical consumers only. It accepts the
 # conditional policy, maps it to its most rigorous leg for them, and exposes the
 # raw annotation for the one caller that must tell a policy from a flat mode.
@@ -356,5 +385,6 @@ test_spawn_refuses_an_issue_key_mismatch
 test_spawn_notices_a_rigor_downgrade_against_the_registry
 test_scout_records_no_delivery_posture
 test_promote_requires_and_records_the_delivery_contract
+test_promotion_handoff_shell_quotes_opaque_issue_key
 test_project_mode_maps_the_conditional_policy
 echo "# all fm-task-delivery tests passed"
