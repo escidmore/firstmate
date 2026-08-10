@@ -134,7 +134,15 @@ if [ "$PROVIDER" = github ] && [ -n "$WT" ] && [ -d "$WT" ] && command -v gh >/d
   fi
 elif [ "$PROVIDER" = forgejo ]; then
   RAW_VIEW=$(forgejo-axi pr view --base-url "https://$HOST" --repo "$PROJECT_PATH" "$NUMBER" --full 2>/dev/null) || RAW_VIEW=
-  REMOTE_HEAD=$(printf '%s\n' "$RAW_VIEW" | sed -n 's/^[[:space:]]*head_sha:[[:space:]]*//p' | head -1)
+  REMOTE_HEAD=$(printf '%s\n' "$RAW_VIEW" | awk '
+    /^pull_request:[[:space:]]*$/ { in_pull = 1; next }
+    in_pull && /^[^[:space:]]/ { exit }
+    in_pull && /^  head_sha:[[:space:]]*/ {
+      sub(/^  head_sha:[[:space:]]*/, "")
+      print
+      exit
+    }
+  ')
   PR_TITLE=$(printf '%s\n' "$RAW_VIEW" | sed -n 's/^[[:space:]]*title:[[:space:]]*//p' | head -1)
   PR_TITLE=${PR_TITLE#\"}
   PR_TITLE=${PR_TITLE%\"}

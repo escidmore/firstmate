@@ -108,16 +108,15 @@ SH
 case "${1:-} ${2:-}" in
   "pr view")
     if [ "${FM_TEST_FORGEJO_MULTILINE:-0}" = 1 ]; then
-      printf 'pull_request:\n  title: "%s"\n  body: |\n' \
-        "${FM_TEST_FORGEJO_TITLE:-fixture pull request}"
-      printf '%s\n' "${FM_TEST_FORGEJO_BODY:-fixture body}" | sed 's/^/  /'
-      printf '  head_sha: %s\n' \
-        "${FM_TEST_FORGEJO_HEAD:-0123456789abcdef0123456789abcdef01234567}"
-    else
-      printf 'pull_request:\n  title: "%s"\n  body: "%s"\n  head_sha: %s\n' \
+      printf 'pull_request:\n  title: "%s"\n  head_sha: %s\n  body: |\n' \
         "${FM_TEST_FORGEJO_TITLE:-fixture pull request}" \
-        "${FM_TEST_FORGEJO_BODY:-fixture body}" \
         "${FM_TEST_FORGEJO_HEAD:-0123456789abcdef0123456789abcdef01234567}"
+      printf '%s\n' "${FM_TEST_FORGEJO_BODY:-fixture body}" | sed 's/^/    /'
+    else
+      printf 'pull_request:\n  title: "%s"\n  head_sha: %s\n  body: "%s"\n' \
+        "${FM_TEST_FORGEJO_TITLE:-fixture pull request}" \
+        "${FM_TEST_FORGEJO_HEAD:-0123456789abcdef0123456789abcdef01234567}" \
+        "${FM_TEST_FORGEJO_BODY:-fixture body}"
     fi
     ;;
   "pr merged")

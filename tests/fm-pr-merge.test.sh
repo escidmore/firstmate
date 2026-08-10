@@ -91,7 +91,7 @@ add_forgejo_mock() {
 printf '%s\n' "\$*" >> "\$FM_TEST_FORGEJO_AXI_LOG"
 case "\${1:-} \${2:-}" in
   "pr view")
-    printf 'pull_request:\n  head_sha: %s\n' '$head'
+    printf 'pull_request:\n  title: fixture pull request\n  head_sha: %s\n  body: |\n    head_sha: body context\n' '$head'
     ;;
   "pr mergeability")
     [ "\${FM_TEST_FORGEJO_MERGEABILITY_RC:-0}" = 0 ] || {
