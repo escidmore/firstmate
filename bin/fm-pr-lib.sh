@@ -22,6 +22,16 @@ FM_PR_PATH=
 FM_PR_OWNER=
 FM_PR_REPO=
 FM_PR_NUMBER=
+FM_PR_PROVIDER_HEAD=
+FM_PR_PROVIDER_TITLE=
+FM_PR_PROVIDER_BODY=
+FM_PR_DELIVERY_PROJECT=
+FM_PR_DELIVERY_ISSUE_KEY=
+FM_PR_DELIVERY_TITLE_RULE=
+FM_PR_DELIVERY_LINK_RULE=
+FM_PR_DELIVERY_WORKTREE=
+FM_PR_DELIVERY_RULE=0
+FM_PR_DELIVERY_ERROR=
 FM_PR_DATA_PROVIDER=
 FM_PR_DATA_URL=
 FM_PR_DATA_HOST=
@@ -185,15 +195,32 @@ fm_pr_provider_fields_load() {
       title=${title#\"}
       title=${title%\"}
       body=$(printf '%s\n' "$raw_view" | awk '
-        !found && /^[[:space:]]*body:[[:space:]]*/ {
+        /^pull_request:[[:space:]]*$/ { in_pull = 1; next }
+        in_pull && /^[^[:space:]]/ { exit }
+        in_pull && !found && /^  body:[[:space:]]*/ {
           body = $0
-          sub(/^[[:space:]]*body:[[:space:]]*/, "", body)
+          sub(/^  body:[[:space:]]*/, "", body)
           found = 1
-          in_body = 1
+          if (body != "|" && body != ">") {
+            print body
+            exit
+          }
+          block = 1
+          body = ""
           next
         }
-        in_body { body = body "\n" $0 }
-        END { if (found) print body }
+        in_pull && found && block {
+          if ($0 ~ /^[^[:space:]]/ || $0 ~ /^  [^[:space:]]/) exit
+          line = $0
+          sub(/^    /, "", line)
+          body = body "\n" line
+        }
+        END {
+          if (found && block) {
+            sub(/^\n/, "", body)
+            print body
+          }
+        }
       ')
       FM_PR_PROVIDER_HEAD=$remote_head
       FM_PR_PROVIDER_TITLE=$title
@@ -208,6 +235,77 @@ fm_pr_provider_fields_load() {
       ;;
     *) return 1 ;;
   esac
+}
+
+fm_pr_task_delivery_metadata_valid() {
+  local meta=$1 provider=$2 host=$3
+  local project issue_key title_rule link_rule worktree
+  FM_PR_DELIVERY_PROJECT=
+  FM_PR_DELIVERY_ISSUE_KEY=
+  FM_PR_DELIVERY_TITLE_RULE=
+  FM_PR_DELIVERY_LINK_RULE=
+  FM_PR_DELIVERY_WORKTREE=
+  FM_PR_DELIVERY_RULE=0
+  FM_PR_DELIVERY_ERROR=
+  project=$(grep '^project=' "$meta" | tail -1 | cut -d= -f2- || true)
+  issue_key=$(grep '^issue_key=' "$meta" | tail -1 | cut -d= -f2- || true)
+  title_rule=$(grep '^delivery_title_rule=' "$meta" | tail -1 | cut -d= -f2- || true)
+  link_rule=$(grep '^delivery_link_rule=' "$meta" | tail -1 | cut -d= -f2- || true)
+  worktree=$(grep '^worktree=' "$meta" | tail -1 | cut -d= -f2- || true)
+  [ -z "$issue_key" ] || printf '%s\n' "$issue_key" | grep -Eq '^[A-Z][A-Z0-9]*-[0-9]+$' || {
+    FM_PR_DELIVERY_ERROR=invalid-issue-key
+    return 1
+  }
+  if [ -n "$title_rule" ] || [ -n "$link_rule" ]; then
+    [ -n "$title_rule" ] && [ -n "$link_rule" ] \
+      && fm_pr_delivery_rule_valid "$title_rule" \
+      && fm_pr_delivery_rule_valid "$link_rule" || {
+        FM_PR_DELIVERY_ERROR=invalid-delivery-rule
+        return 1
+      }
+  fi
+  [ -z "$issue_key" ] || [ -z "$title_rule" ] || [ -z "$link_rule" ] || FM_PR_DELIVERY_RULE=1
+  if [ "$provider" = forgejo ] && ! fm_pr_forgejo_project_authorized "$project" "$host"; then
+    FM_PR_DELIVERY_ERROR=unauthorized-forgejo
+    return 1
+  fi
+  FM_PR_DELIVERY_PROJECT=$project
+  FM_PR_DELIVERY_ISSUE_KEY=$issue_key
+  FM_PR_DELIVERY_TITLE_RULE=$title_rule
+  FM_PR_DELIVERY_LINK_RULE=$link_rule
+  FM_PR_DELIVERY_WORKTREE=$worktree
+}
+
+fm_pr_task_delivery_provider_fields_valid() {
+  FM_PR_DELIVERY_ERROR=
+  [ "$FM_PR_DELIVERY_RULE" = 1 ] || return 0
+  [ -n "$FM_PR_PROVIDER_TITLE" ] && [ -n "$FM_PR_PROVIDER_BODY" ] || {
+    FM_PR_DELIVERY_ERROR=provider-fields
+    return 1
+  }
+  fm_pr_delivery_title_matches \
+    "$FM_PR_PROVIDER_TITLE" "$FM_PR_DELIVERY_TITLE_RULE" "$FM_PR_DELIVERY_ISSUE_KEY" || {
+      FM_PR_DELIVERY_ERROR=title-mismatch
+      return 1
+    }
+  fm_pr_delivery_body_links_issue \
+    "$FM_PR_PROVIDER_BODY" "$FM_PR_DELIVERY_LINK_RULE" "$FM_PR_DELIVERY_ISSUE_KEY" || {
+      FM_PR_DELIVERY_ERROR=body-link-mismatch
+      return 1
+    }
+}
+
+fm_pr_task_delivery_fields_valid() {
+  local meta=$1 provider=$2 url=$3 host=$4 path=$5 number=$6 required=${7:-0}
+  local provider_required=$required
+  fm_pr_task_delivery_metadata_valid "$meta" "$provider" "$host" || return 1
+  [ "$FM_PR_DELIVERY_RULE" = 1 ] && provider_required=1
+  fm_pr_provider_fields_load "$provider" "$url" "$host" "$path" "$number" \
+    "$FM_PR_DELIVERY_WORKTREE" "$provider_required" || {
+      FM_PR_DELIVERY_ERROR=provider-fields
+      return 1
+    }
+  fm_pr_task_delivery_provider_fields_valid
 }
 
 # GitLab serves self-hosted instances, so the host is part of the identity
