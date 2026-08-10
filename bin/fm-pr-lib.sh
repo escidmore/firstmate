@@ -191,7 +191,15 @@ fm_pr_provider_fields_load() {
           exit
         }
       ')
-      title=$(printf '%s\n' "$raw_view" | sed -n 's/^[[:space:]]*title:[[:space:]]*//p' | head -1)
+      title=$(printf '%s\n' "$raw_view" | awk '
+        /^pull_request:[[:space:]]*$/ { in_pull = 1; next }
+        in_pull && /^[^[:space:]]/ { exit }
+        in_pull && /^  title:[[:space:]]*/ {
+          sub(/^  title:[[:space:]]*/, "")
+          print
+          exit
+        }
+      ')
       title=${title#\"}
       title=${title%\"}
       body=$(printf '%s\n' "$raw_view" | awk '

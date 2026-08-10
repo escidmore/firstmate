@@ -108,8 +108,11 @@ SH
 case "${1:-} ${2:-}" in
   "pr view")
     if [ "${FM_TEST_FORGEJO_MULTILINE:-0}" = 1 ]; then
-      printf 'pull_request:\n  title: "%s"\n  head_sha: %s\n  body: |\n' \
-        "${FM_TEST_FORGEJO_TITLE:-fixture pull request}" \
+      printf 'pull_request:\n'
+      if [ "${FM_TEST_FORGEJO_OMIT_TITLE:-0}" != 1 ]; then
+        printf '  title: "%s"\n' "${FM_TEST_FORGEJO_TITLE:-fixture pull request}"
+      fi
+      printf '  head_sha: %s\n  body: |\n' \
         "${FM_TEST_FORGEJO_HEAD:-0123456789abcdef0123456789abcdef01234567}"
       printf '%s\n' "${FM_TEST_FORGEJO_BODY:-fixture body}" | sed 's/^/    /'
       if [ "${FM_TEST_FORGEJO_TRAILING_ISSUE_FIELD:-0}" = 1 ]; then
@@ -850,6 +853,22 @@ test_declared_delivery_rule_precedes_registration_and_merge() {
   [ "$rc" -ne 0 ] || fail "a provider field link satisfied a missing Forgejo body link"
   ! grep -q '^pr=' "$dir/home/state/task-a.meta" \
     || fail "a provider field link reached PR registration"
+  assert_poll_absent "$dir/home/state" task-a
+
+  dir=$(make_case rule-forgejo-title-body-collision)
+  write_delivery_task_meta "$dir" TASK-91 '{issue_key}:' 'https://tracker.example/issue/{issue_key}'
+  set +e
+  FM_TEST_FORGEJO_MULTILINE=1 FM_TEST_FORGEJO_OMIT_TITLE=1 \
+    FM_TEST_FORGEJO_BODY=$'title: TASK-91: forged title\n'"$valid_body" \
+    run_check_entry "$dir" task-a https://forgejo.example/owner/repo/pulls/91 \
+      > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "a Forgejo body title satisfied a missing provider title"
+  assert_contains "$(cat "$dir/stderr")" "could not read PR title and body" \
+    "a missing Forgejo provider title was not rejected"
+  ! grep -q '^pr=' "$dir/home/state/task-a.meta" \
+    || fail "a Forgejo body title reached PR registration"
   assert_poll_absent "$dir/home/state" task-a
 
   dir=$(make_case rule-provider-read-failure)
