@@ -976,6 +976,29 @@ test_merged_pr_with_later_local_commit_refuses() {
   pass "merged PR does not allow teardown after a later local commit"
 }
 
+test_merged_pr_with_mismatched_head_does_not_use_content_fallback() {
+  local case_dir rc local_head base pr_head
+  case_dir=$(make_case merged-pr-head-mismatch)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt hello "add feature"
+  append_pr_meta_url "$case_dir"
+  local_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  base=$(git -C "$case_dir/wt" rev-parse "$local_head^")
+  pr_head=$(printf '%s\n' "unrelated merged head" | git -C "$case_dir/wt" commit-tree "$base^{tree}" -p "$base")
+  land_on_origin_main "$case_dir" feature.txt hello
+  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "merged-pr-head-mismatch: a merged PR with the wrong head should refuse"
+  grep -q REFUSED "$case_dir/stderr" \
+    || fail "merged-pr-head-mismatch: no REFUSED line in stderr"
+  pass "a merged PR whose head omits local work cannot use content fallback"
+}
+
 test_pr_check_does_not_refresh_stale_pr_head() {
   local case_dir rc pr_head new_head count
   case_dir=$(make_case pr-check-stale)
@@ -2783,6 +2806,7 @@ test_squash_merged_pr_allows_when_head_ancestor_of_pr_head
 test_no_pr_recorded_discovers_merged_pr_by_branch_allows
 test_squash_merged_pr_allows_replayed_unpushed_patch
 test_merged_pr_with_later_local_commit_refuses
+test_merged_pr_with_mismatched_head_does_not_use_content_fallback
 test_pr_check_does_not_refresh_stale_pr_head
 test_pr_check_records_remote_head_when_local_lags
 test_content_in_default_fallback_allows

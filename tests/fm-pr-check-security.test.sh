@@ -906,6 +906,60 @@ SH
   pass "metadata changes during provider validation fail closed before publication"
 }
 
+test_migration_validates_each_canonical_task_before_rearm() {
+  local dir state rc
+  dir=$(make_case rule-migration-other-task)
+  state="$dir/home/state"
+  write_delivery_task_meta "$dir" TASK-91 '{issue_key}:' 'https://tracker.example/issue/{issue_key}'
+  fm_write_meta "$state/task-b.meta" \
+    'window=firstmate:fm-task-b' \
+    'endpoint_task_id=task-b' \
+    "worktree=$dir/wt" \
+    "project=$dir/project" \
+    'kind=ship' \
+    'mode=no-mistakes' \
+    'issue_key=TASK-91' \
+    'delivery_title_rule={issue_key}:' \
+    'delivery_link_rule=https://tracker.example/issue/{issue_key}' \
+    'pr=https://github.com/o/r/pull/92'
+  printf '%s\n' 'legacy task-b bytes' > "$state/task-b.check.sh"
+  cat > "$dir/fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+case " $* " in
+  *"/pull/91"*)
+    printf '%s\t%s\t%s\n' \
+      0123456789abcdef0123456789abcdef01234567 \
+      'TASK-91:guard delivery' \
+      'Tracks https://tracker.example/issue/TASK-91/guard-delivery'
+    exit 0
+    ;;
+  *"/pull/92"*)
+    printf '%s\t%s\t%s\n' \
+      0123456789abcdef0123456789abcdef01234567 \
+      'TASK-92:wrong delivery' \
+      'Tracks https://tracker.example/issue/TASK-91/guard-delivery'
+    exit 0
+    ;;
+esac
+exit 1
+SH
+  chmod +x "$dir/fakebin/gh"
+
+  set +e
+  run_check_entry "$dir" task-a https://github.com/o/r/pull/91 > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+
+  [ "$rc" -eq 0 ] || fail "current task registration did not survive another task's rejected legacy poll"
+  fm_pr_poll_artifacts_valid "$state" task-a "$POLL" \
+    || fail "current task did not publish after migration quarantined another task"
+  [ ! -e "$state/task-b.check.sh" ] && [ ! -e "$state/task-b.pr-poll" ] \
+    || fail "migration rearmed an unvalidated task poll"
+  find "$state/.pr-check-quarantine" -name 'task-b.check.*' -type f | grep . >/dev/null \
+    || fail "migration did not quarantine the unvalidated task check"
+  pass "migration validates every canonical task before rearming its poll"
+}
+
 run_watcher_bounded() {
   local home=$1 fakebin=$2 check_interval=${FM_TEST_CHECK_INTERVAL:-0} watch_root=${FM_TEST_WATCH_ROOT:-$ROOT}
   shift 2
@@ -3774,6 +3828,7 @@ test_invalid_entrypoints_have_zero_side_effects
 test_valid_recording_and_merge_derivation
 test_declared_delivery_rule_precedes_registration_and_merge
 test_metadata_change_refuses_before_publication
+test_migration_validates_each_canonical_task_before_rearm
 test_rejected_metacharacter_bytes_are_inert
 test_static_poll_contract
 test_atomic_interruption_leaves_no_partial_artifact
