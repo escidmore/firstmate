@@ -64,7 +64,8 @@ fm_nm_successful_terminal() {  # <axi-status-output> [<run-id>]
   [ -z "$expected_id" ] || [ "$run_id" = "$expected_id" ] || return 1
   [ "$status" = completed ] || return 1
   case "$outcome" in
-    ''|unknown|failed|cancelled|checks-passed|commit-only|incomplete|working|running|pr-ready) return 1 ;;
+    passed|delivered) return 0 ;;
+    *) return 1 ;;
   esac
 }
 
