@@ -139,22 +139,13 @@ elif [ "$PROVIDER" = forgejo ]; then
   PR_TITLE=${PR_TITLE#\"}
   PR_TITLE=${PR_TITLE%\"}
   PR_BODY=$(printf '%s\n' "$RAW_VIEW" | awk '
-    function same_level_field(line, indent, rest) {
-      match(line, /^[[:space:]]*/)
-      indent = RLENGTH
-      rest = substr(line, indent + 1)
-      return indent == body_indent && rest ~ /^head_sha:[[:space:]]*/
-    }
-    /^[[:space:]]*body:[[:space:]]*/ {
-      match($0, /^[[:space:]]*/)
-      body_indent = RLENGTH
+    !found && /^[[:space:]]*body:[[:space:]]*/ {
       body = $0
       sub(/^[[:space:]]*body:[[:space:]]*/, "", body)
       found = 1
       in_body = 1
       next
     }
-    in_body && same_level_field($0) { exit }
     in_body { body = body "\n" $0 }
     END { if (found) print body }
   ')
