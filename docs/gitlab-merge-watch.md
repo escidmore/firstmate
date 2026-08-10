@@ -1,6 +1,6 @@
 # GitLab merge request watch verification
 
-Empirical record for the merge watch on GitLab, alongside the existing GitHub and Forgejo watches.
+Empirical record for the merge watch on GitLab, alongside the existing GitHub watch.
 Every command below was run on 2026-07-21 and its output is reproduced exactly.
 
 ## Versions
