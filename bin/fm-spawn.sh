@@ -320,8 +320,8 @@ done
 [ "$YOLO_SET" -eq 0 ] || [ -n "$YOLO" ] || { echo "error: --yolo requires a non-empty value" >&2; exit 1; }
 [ "$ISSUE_KEY_SET" -eq 0 ] || [ -n "$ISSUE_KEY" ] || { echo "error: --issue-key requires a non-empty value" >&2; exit 1; }
 [ "$TRACEPARENT_SET" -eq 0 ] || [ -n "$TRACEPARENT_ARG" ] || { echo "error: --traceparent requires a non-empty value" >&2; exit 1; }
-if [ "$ISSUE_KEY_SET" -eq 1 ] && ! printf '%s\n' "$ISSUE_KEY" | grep -Eq '^[A-Z][A-Z0-9]*-[0-9]+$'; then
-  echo "error: --issue-key must be an uppercase issue key followed by a numeric identifier" >&2
+if [ "$ISSUE_KEY_SET" -eq 1 ] && ! fm_pr_delivery_issue_key_valid "$ISSUE_KEY"; then
+  echo "error: --issue-key must be a non-empty single-line value without whitespace or control characters" >&2
   exit 1
 fi
 # A parent-delivered carrier replaces this home's own resolution, so it is

@@ -161,7 +161,12 @@ EOF
     "issue-key mismatch refusal did not name the task"
   assert_absent "$home/state/delivery-issue-b4.meta" \
     "issue-key mismatch wrote task metadata"
-  pass "fm-spawn: the brief and spawn must carry the same issue key"
+
+  write_brief "$home" delivery-issue-b5 no-mistakes external/42
+  out=$(run_spawn "$home" "$fakebin" delivery-issue-b5 "$proj" claude --mode no-mistakes --yolo off --issue-key external/42)
+  assert_not_contains "$out" "uppercase issue key" \
+    "spawn rejected an opaque tracker-neutral issue key"
+  pass "fm-spawn: the brief and spawn must carry the same opaque issue key"
 }
 
 # The registry is the captain's standing posture, so dropping below its rigor is
@@ -279,15 +284,15 @@ test_promote_requires_and_records_the_delivery_contract() {
   write_scout_meta
   write_brief "$home" promote-d1
   out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" promote-d1 --mode no-mistakes --yolo on \
-    --issue-key TASK-77 --delivery-title-rule '{issue_key}:' \
+    --issue-key external/42 --delivery-title-rule '{issue_key}:' \
     --delivery-link-rule 'https://tracker.example/issue/{issue_key}' 2>&1)
   status=$?
   expect_code 0 "$status" "a promotion carrying its delivery contract and issue key should succeed"
   assert_grep 'kind=ship' "$meta" "promotion did not restore ship teardown protection"
   assert_grep 'mode=no-mistakes' "$meta" "promotion did not record the decided delivery mode"
   assert_grep 'yolo=on' "$meta" "promotion did not record the decided approval posture"
-  assert_grep 'issue_key=TASK-77' "$meta" "promotion did not record the intake issue key"
-  grep -qx 'Delivery issue: TASK-77' "$home/data/promote-d1/brief.md" \
+  assert_grep 'issue_key=external/42' "$meta" "promotion did not record the intake issue key"
+  grep -qx 'Delivery issue: external/42' "$home/data/promote-d1/brief.md" \
     || fail "promotion did not record the issue key in the promoted brief"
   grep -qx 'Delivery title rule: {issue_key}:' "$home/data/promote-d1/brief.md" \
     || fail "promotion did not record the title rule in the promoted brief"
@@ -300,11 +305,11 @@ test_promote_requires_and_records_the_delivery_contract() {
     "promotion hint did not require the immediate no-mistakes flow"
   assert_contains "$out" "never a commit-only done event" \
     "promotion hint still allowed commit-only completion"
-  assert_contains "$out" "expected issue TASK-77" \
+  assert_contains "$out" "expected issue external/42" \
     "promotion hint omitted the expected issue"
-  assert_contains "$out" "PR title must begin with TASK-77:" \
+  assert_contains "$out" "PR title must begin with external/42:" \
     "promotion hint omitted the issue-prefixed title requirement"
-  assert_contains "$out" "https://tracker.example/issue/TASK-77" \
+  assert_contains "$out" "https://tracker.example/issue/external/42" \
     "promotion hint omitted the matching link requirement"
   [ "$(grep -c '^mode=' "$meta")" = 1 ] || fail "promotion left more than one mode= line in the task record"
   pass "fm-promote: optional issue guidance is propagated and recorded exactly once"

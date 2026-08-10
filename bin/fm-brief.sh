@@ -173,8 +173,8 @@ elif [ "$MODE_SET" -eq 1 ]; then
   exit 1
 fi
 [ "$ISSUE_KEY_SET" -eq 0 ] || [ -n "$ISSUE_KEY" ] || { echo "error: --issue-key requires a non-empty value" >&2; exit 1; }
-if [ "$ISSUE_KEY_SET" -eq 1 ] && ! printf '%s\n' "$ISSUE_KEY" | grep -Eq '^[A-Z][A-Z0-9]*-[0-9]+$'; then
-  echo "error: --issue-key must be an uppercase issue key followed by a numeric identifier" >&2
+if [ "$ISSUE_KEY_SET" -eq 1 ] && ! fm_pr_delivery_issue_key_valid "$ISSUE_KEY"; then
+  echo "error: --issue-key must be a non-empty single-line value without whitespace or control characters" >&2
   exit 1
 fi
 if [ "$KIND" != ship ] && { [ "$DELIVERY_TITLE_RULE_SET" -eq 1 ] || [ "$DELIVERY_LINK_RULE_SET" -eq 1 ]; }; then

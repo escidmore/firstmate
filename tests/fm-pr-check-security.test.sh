@@ -691,6 +691,17 @@ test_declared_delivery_rule_precedes_registration_and_merge() {
       || fail "$provider policy validation did not publish a valid poll"
   done
 
+  dir=$(make_case rule-opaque-key)
+  write_delivery_task_meta "$dir" external/42 '{issue_key}:' 'https://tracker.example/issue/{issue_key}'
+  FM_TEST_GH_TITLE='external/42:guard delivery' \
+    FM_TEST_GH_BODY='Tracks https://tracker.example/issue/external/42' \
+    run_check_entry "$dir" task-a https://github.com/o/r/pull/91 \
+    || fail "registration rejected a tracker-neutral opaque issue key"
+  grep -qxF 'pr=https://github.com/o/r/pull/91' "$dir/home/state/task-a.meta" \
+    || fail "opaque issue-key validation did not reach canonical registration"
+  fm_pr_poll_artifacts_valid "$dir/home/state" task-a "$POLL" \
+    || fail "opaque issue-key validation did not publish a valid poll"
+
   dir=$(make_case rule-missing-key)
   write_delivery_task_meta "$dir" '' '{issue_key}:' 'https://tracker.example/issue/{issue_key}'
   set +e

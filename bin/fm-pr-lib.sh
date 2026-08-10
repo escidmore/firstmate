@@ -118,6 +118,15 @@ fm_task_id_creation_valid() {
   [ "${#id}" -le 64 ]
 }
 
+fm_pr_delivery_issue_key_valid() {
+  local issue_key=${1-}
+  local LC_ALL=C
+  [ -n "$issue_key" ] || return 1
+  case "$issue_key" in
+    *[[:space:]]* | *[[:cntrl:]]*) return 1 ;;
+  esac
+}
+
 fm_pr_delivery_rule_valid() {
   local rule=${1-}
   [ -n "$rule" ] || return 1
@@ -205,7 +214,7 @@ fm_pr_task_delivery_metadata_valid() {
   title_rule=$(grep '^delivery_title_rule=' "$meta" | tail -1 | cut -d= -f2- || true)
   link_rule=$(grep '^delivery_link_rule=' "$meta" | tail -1 | cut -d= -f2- || true)
   worktree=$(grep '^worktree=' "$meta" | tail -1 | cut -d= -f2- || true)
-  [ -z "$issue_key" ] || printf '%s\n' "$issue_key" | grep -Eq '^[A-Z][A-Z0-9]*-[0-9]+$' || {
+  [ -z "$issue_key" ] || fm_pr_delivery_issue_key_valid "$issue_key" || {
     FM_PR_DELIVERY_ERROR='invalid-issue-key'
     return 1
   }
