@@ -868,6 +868,51 @@ SH
     || fail "migration did not quarantine the unvalidated task check"
   pass "migration validates every canonical task before rearming its poll"
 }
+test_migration_reuses_prepublication_delivery_validation() {
+  local dir state count rc
+  dir=$(make_case rule-migration-validation-reuse)
+  state="$dir/home/state"
+  write_delivery_task_meta "$dir" TASK-91 '{issue_key}:' 'https://tracker.example/issue/{issue_key}'
+  printf '%s\n' 'legacy task-a bytes' > "$state/task-a.check.sh"
+  printf '%s\n' 'pr=https://github.com/o/r/pull/91' >> "$state/task-a.meta"
+  cat > "$dir/fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+case " $* " in
+  *" headRefOid,title,body "*)
+    count=0
+    [ -f "$FM_TEST_GH_COUNT" ] && count=$(cat "$FM_TEST_GH_COUNT")
+    count=$((count + 1))
+    printf '%s\n' "$count" > "$FM_TEST_GH_COUNT"
+    if [ "$count" -eq 1 ]; then
+      printf '%s\t%s\t%s\n' \
+        0123456789abcdef0123456789abcdef01234567 \
+        'TASK-91:guard delivery' \
+        'Tracks https://tracker.example/issue/TASK-91/guard-delivery'
+    else
+      printf '%s\t%s\t%s\n' \
+        0123456789abcdef0123456789abcdef01234567 \
+        'TASK-92:wrong delivery' \
+        'Tracks https://tracker.example/issue/TASK-91/guard-delivery'
+    fi
+    exit 0
+    ;;
+esac
+exit 1
+SH
+  chmod +x "$dir/fakebin/gh"
+
+  set +e
+  FM_TEST_GH_COUNT="$dir/gh-count" FM_HOME="$dir/home" PATH="$dir/fakebin:$BASE_PATH" \
+    "$MIGRATE" > "$dir/migrate.out" 2> "$dir/migrate.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || fail "migration rejected a poll after its prepublication validation passed"
+  count=$(cat "$dir/gh-count")
+  [ "$count" -eq 1 ] || fail "migration re-read provider fields after publishing the poll"
+  fm_pr_poll_artifacts_valid "$state" task-a "$POLL" \
+    || fail "migration did not leave the validated poll armed"
+  pass "migration reuses validated provider fields after poll publication"
+}
 run_watcher_bounded() {
   local home=$1 fakebin=$2 check_interval=${FM_TEST_CHECK_INTERVAL:-0} watch_root=${FM_TEST_WATCH_ROOT:-$ROOT}
   shift 2
@@ -3566,6 +3611,7 @@ test_valid_recording_and_merge_derivation
 test_declared_delivery_rule_precedes_registration_and_merge
 test_metadata_change_refuses_before_publication
 test_migration_validates_each_canonical_task_before_rearm
+test_migration_reuses_prepublication_delivery_validation
 test_rejected_metacharacter_bytes_are_inert
 test_static_poll_contract
 test_atomic_interruption_leaves_no_partial_artifact

@@ -40,49 +40,40 @@ if [ ! -f "$META" ] || [ -L "$META" ] || [ "$(fm_pr_file_link_count "$META")" !=
   echo "error: task metadata is unavailable" >&2
   exit 1
 fi
-load_task_metadata_fields() {
-  ISSUE_KEY=$(grep '^issue_key=' "$META" | tail -1 | cut -d= -f2- || true)
-  DELIVERY_TITLE_RULE=$(grep '^delivery_title_rule=' "$META" | tail -1 | cut -d= -f2- || true)
-  DELIVERY_LINK_RULE=$(grep '^delivery_link_rule=' "$META" | tail -1 | cut -d= -f2- || true)
-  WT=$(grep '^worktree=' "$META" | tail -1 | cut -d= -f2- || true)
-}
-
 validate_task_metadata_fields() {
-  if [ -n "$ISSUE_KEY" ] && ! printf '%s\n' "$ISSUE_KEY" | grep -Eq '^[A-Z][A-Z0-9]*-[0-9]+$'; then
-    echo "error: task metadata carries an invalid issue key" >&2
+  if ! fm_pr_task_delivery_metadata_valid "$META" "$PROVIDER" "$HOST"; then
+    case "$FM_PR_DELIVERY_ERROR" in
+      invalid-issue-key) echo "error: task metadata carries an invalid issue key" >&2 ;;
+      invalid-delivery-rule) echo "error: task metadata carries an invalid delivery rule" >&2 ;;
+      *) echo "error: task metadata carries invalid delivery fields" >&2 ;;
+    esac
     return 1
   fi
-  if [ -n "$DELIVERY_TITLE_RULE" ] || [ -n "$DELIVERY_LINK_RULE" ]; then
-    if [ -z "$DELIVERY_TITLE_RULE" ] || [ -z "$DELIVERY_LINK_RULE" ] \
-      || ! fm_pr_delivery_rule_valid "$DELIVERY_TITLE_RULE" \
-      || ! fm_pr_delivery_rule_valid "$DELIVERY_LINK_RULE"; then
-        echo "error: task metadata carries an invalid delivery rule" >&2
-        return 1
-    fi
-  fi
-  DELIVERY_RULE=0
-  [ -z "$ISSUE_KEY" ] || [ -z "$DELIVERY_TITLE_RULE" ] || [ -z "$DELIVERY_LINK_RULE" ] || DELIVERY_RULE=1
+  ISSUE_KEY=$FM_PR_DELIVERY_ISSUE_KEY
+  DELIVERY_TITLE_RULE=$FM_PR_DELIVERY_TITLE_RULE
+  DELIVERY_LINK_RULE=$FM_PR_DELIVERY_LINK_RULE
+  WT=$FM_PR_DELIVERY_WORKTREE
+  DELIVERY_RULE=$FM_PR_DELIVERY_RULE
 }
 
 validate_provider_delivery_fields() {
-  if [ "$DELIVERY_RULE" = 1 ]; then
-    [ -n "$PR_TITLE" ] && [ -n "$PR_BODY" ] || {
-      echo "error: could not read PR title and body for delivery validation" >&2
-      return 1
-    }
-    fm_pr_delivery_title_matches "$PR_TITLE" "$DELIVERY_TITLE_RULE" "$ISSUE_KEY" || {
-      echo "error: PR title does not match the declared delivery rule" >&2
-      return 1
-    }
-    fm_pr_delivery_body_links_issue "$PR_BODY" "$DELIVERY_LINK_RULE" "$ISSUE_KEY" || {
-      echo "error: PR body does not link the expected issue" >&2
-      return 1
-    }
+  FM_PR_PROVIDER_TITLE=$PR_TITLE
+  FM_PR_PROVIDER_BODY=$PR_BODY
+  if ! fm_pr_task_delivery_provider_fields_valid; then
+    case "$FM_PR_DELIVERY_ERROR" in
+      provider-fields) echo "error: could not read PR title and body for delivery validation" >&2 ;;
+      title-mismatch) echo "error: PR title does not match the declared delivery rule" >&2 ;;
+      body-link-mismatch) echo "error: PR body does not link the expected issue" >&2 ;;
+      *) echo "error: provider delivery fields are invalid" >&2 ;;
+    esac
+    return 1
   fi
 }
 
-load_task_metadata_fields
+PROVIDER_FIELDS_REQUIRED=1
+[ "$PROVIDER" = gitlab ] && PROVIDER_FIELDS_REQUIRED=0
 validate_task_metadata_fields || exit 1
+[ "$PROVIDER" = gitlab ] && PROVIDER_FIELDS_REQUIRED=$DELIVERY_RULE
 INITIAL_ISSUE_KEY=$ISSUE_KEY
 INITIAL_DELIVERY_TITLE_RULE=$DELIVERY_TITLE_RULE
 INITIAL_DELIVERY_LINK_RULE=$DELIVERY_LINK_RULE
@@ -113,8 +104,6 @@ fi
 PR_HEAD=
 PR_TITLE=
 PR_BODY=
-PROVIDER_FIELDS_REQUIRED=1
-[ "$PROVIDER" = gitlab ] && PROVIDER_FIELDS_REQUIRED=$DELIVERY_RULE
 fm_pr_provider_fields_load "$PROVIDER" "$URL" "$HOST" "$PROJECT_PATH" "$NUMBER" "$WT" \
   "$PROVIDER_FIELDS_REQUIRED" || exit 1
 PR_TITLE=$FM_PR_PROVIDER_TITLE
@@ -146,7 +135,6 @@ META_LOCK_HELD=1
 META_DEVICE=$(fm_pr_file_device "$META") || exit 1
 STATE_DEVICE=$(fm_pr_file_device "$STATE") || exit 1
 [ "$META_DEVICE" = "$STATE_DEVICE" ] || { echo "error: task metadata is unavailable" >&2; exit 1; }
-load_task_metadata_fields
 validate_task_metadata_fields || exit 1
 [ "$ISSUE_KEY" = "$INITIAL_ISSUE_KEY" ] \
   && [ "$DELIVERY_TITLE_RULE" = "$INITIAL_DELIVERY_TITLE_RULE" ] \
