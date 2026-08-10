@@ -156,7 +156,8 @@ fm_pr_delivery_title_matches() {
 fm_pr_delivery_body_links_issue() {
   local body=$1 rule=$2 issue_key=$3 expected
   expected=$(fm_pr_delivery_rule_expand "$rule" "$issue_key")
-  awk -v needle="$expected" '
+  FM_PR_DELIVERY_NEEDLE=$expected awk '
+    BEGIN { needle = ENVIRON["FM_PR_DELIVERY_NEEDLE"] }
     {
       rest = $0
       while ((pos = index(rest, needle)) > 0) {
@@ -773,6 +774,16 @@ fm_pr_poll_artifacts_valid() {
   [ "$FM_PR_META_HOST" = "$FM_PR_DATA_HOST" ] || return 1
   [ "$FM_PR_META_PATH" = "$FM_PR_DATA_PATH" ] || return 1
   [ "$FM_PR_META_NUMBER" = "$FM_PR_DATA_NUMBER" ]
+}
+
+fm_pr_poll_delivery_fields_valid() {
+  local state=$1 id=$2 template=$3 data
+  fm_pr_poll_artifacts_valid "$state" "$id" "$template" || return 1
+  data="$state/$id.pr-poll"
+  fm_pr_poll_data_parse "$data" || return 1
+  fm_pr_task_delivery_fields_valid "$state/$id.meta" \
+    "$FM_PR_DATA_PROVIDER" "$FM_PR_DATA_URL" "$FM_PR_DATA_HOST" \
+    "$FM_PR_DATA_PATH" "$FM_PR_DATA_NUMBER" 0
 }
 
 fm_pr_poll_snapshot_capture() {

@@ -759,6 +759,15 @@ test_declared_delivery_rule_precedes_registration_and_merge() {
     || fail "missing declared link reached PR registration"
   assert_poll_absent "$dir/home/state" task-a
 
+  dir=$(make_case rule-backslash)
+  write_delivery_task_meta "$dir" 'TASK\91' '{issue_key}:' 'https://tracker.example/issue/{issue_key}'
+  FM_TEST_GH_TITLE='TASK\91:guard delivery' \
+    FM_TEST_GH_BODY='Tracks https://tracker.example/issue/TASK\91/guard-delivery' \
+    run_check_entry "$dir" task-a https://github.com/o/r/pull/91 \
+    || fail "registration decoded a backslash in the declared issue key"
+  grep -q '^pr=' "$dir/home/state/task-a.meta" \
+    || fail "backslash-preserving delivery validation did not reach registration"
+
   dir=$(make_case rule-provider-read-failure)
   write_delivery_task_meta "$dir" TASK-91 '{issue_key}:' 'https://tracker.example/issue/{issue_key}'
   set +e
@@ -923,6 +932,36 @@ SH
     || fail "migration did not quarantine the unvalidated task check"
   pass "migration validates every canonical task before rearming its poll"
 }
+
+test_migration_rejects_changed_delivery_on_existing_poll() {
+  local dir state rc
+  dir=$(make_case rule-migration-existing-poll)
+  state="$dir/home/state"
+  write_delivery_task_meta "$dir" TASK-91 '{issue_key}:' 'https://tracker.example/issue/{issue_key}'
+  FM_TEST_GH_TITLE='TASK-91:guard delivery' \
+    FM_TEST_GH_BODY='Tracks https://tracker.example/issue/TASK-91/guard-delivery' \
+    run_check_entry "$dir" task-a https://github.com/o/r/pull/91 \
+    || fail "could not seed the existing canonical poll"
+  sed 's/^delivery_title_rule=.*/delivery_title_rule={issue_key}:changed/' \
+    "$state/task-a.meta" > "$state/task-a.meta.tmp"
+  mv "$state/task-a.meta.tmp" "$state/task-a.meta"
+  rm -f "$state/.pr-check-migration-v1" "$state/.pr-check-migration-scan-v1"
+
+  set +e
+  FM_TEST_GH_TITLE='TASK-91:guard delivery' \
+    FM_TEST_GH_BODY='Tracks https://tracker.example/issue/TASK-91/guard-delivery' \
+    FM_HOME="$dir/home" PATH="$dir/fakebin:$BASE_PATH" \
+    "$MIGRATE" > "$dir/migrate.out" 2> "$dir/migrate.err"
+  rc=$?
+  set -e
+
+  [ "$rc" -ne 0 ] || fail "migration accepted a structurally valid poll with changed delivery rules"
+  assert_poll_absent "$state" task-a
+  find "$state/.pr-check-quarantine" -name 'task-a.check.*' -type f | grep . >/dev/null \
+    || fail "migration did not quarantine the rejected existing poll"
+  pass "migration revalidates delivery fields on an existing poll before leaving monitoring armed"
+}
+
 test_migration_reuses_prepublication_delivery_validation() {
   local dir state count rc
   dir=$(make_case rule-migration-validation-reuse)
@@ -3667,6 +3706,7 @@ test_declared_delivery_rule_precedes_registration_and_merge
 test_metadata_change_refuses_before_publication
 test_provider_change_refuses_before_publication
 test_migration_validates_each_canonical_task_before_rearm
+test_migration_rejects_changed_delivery_on_existing_poll
 test_migration_reuses_prepublication_delivery_validation
 test_rejected_metacharacter_bytes_are_inert
 test_static_poll_contract

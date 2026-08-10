@@ -26,6 +26,7 @@ NONCANONICAL_PREFIX='!noncanonical'
 LEGACY_NONCANONICAL_PREFIX=_noncanonical
 
 ALLOW_INCOMPLETE_REPAIRS=0
+MIGRATION_DELIVERY_VALIDATED=0
 if [ "$#" -eq 1 ] && [ "$1" = --checks-safe ]; then
   ALLOW_INCOMPLETE_REPAIRS=1
 elif [ "$#" -ne 0 ]; then
@@ -86,7 +87,11 @@ current_checks_authenticated() {
     fi
     id=$(basename "$check" .check.sh)
     fm_custom_check_registered "$STATE" "$id" && continue
-    fm_pr_poll_artifacts_valid "$STATE" "$id" "$TEMPLATE" || return 1
+    if [ "$MIGRATION_DELIVERY_VALIDATED" -eq 1 ]; then
+      fm_pr_poll_artifacts_valid "$STATE" "$id" "$TEMPLATE" || return 1
+    else
+      fm_pr_poll_delivery_fields_valid "$STATE" "$id" "$TEMPLATE" || return 1
+    fi
   done
 }
 
@@ -380,7 +385,7 @@ migration_needed() {
     fi
     id=$(basename "$check" .check.sh)
     fm_custom_check_registered "$STATE" "$id" && continue
-    if ! fm_pr_poll_artifacts_valid "$STATE" "$id" "$TEMPLATE"; then
+    if ! fm_pr_poll_delivery_fields_valid "$STATE" "$id" "$TEMPLATE"; then
       return 0
     fi
   done
@@ -720,16 +725,10 @@ remove_diagnostic_obligation() {
 }
 
 canonical_terminal_success() {
-  local id=$1 meta provider url host path number
+  local id=$1 meta
   meta="$STATE/$id.meta"
   metadata_pr_is_canonical "$meta" || return 1
-  provider=$MIGRATION_PROVIDER
-  url=$MIGRATION_URL
-  host=$MIGRATION_HOST
-  path=$MIGRATION_PATH
-  number=$MIGRATION_NUMBER
-  fm_pr_task_delivery_fields_valid "$meta" "$provider" "$url" "$host" "$path" "$number" 0 \
-    || return 1
+  fm_pr_poll_delivery_fields_valid "$STATE" "$id" "$TEMPLATE" || return 1
   canonical_poll_artifacts_valid "$id"
 }
 
@@ -1045,7 +1044,7 @@ if migration_needed; then
     fi
     id=$(basename "$check" .check.sh)
     fm_custom_check_registered "$STATE" "$id" && continue
-    fm_pr_poll_artifacts_valid "$STATE" "$id" "$TEMPLATE" && continue
+    fm_pr_poll_delivery_fields_valid "$STATE" "$id" "$TEMPLATE" && continue
 
     if fm_pr_task_id_valid "$id"; then
       prefix=$id
@@ -1125,6 +1124,9 @@ if ! pending_outcomes_complete || ! failure_obligations_absent; then
   migration_failed=1
 fi
 
+if [ "$migration_failed" -eq 0 ]; then
+  MIGRATION_DELIVERY_VALIDATED=1
+fi
 scan_safe=0
 if [ "$diagnostics_failed" -eq 0 ] && unsafe_checks_absent && publish_scan_marker; then
   scan_safe=1

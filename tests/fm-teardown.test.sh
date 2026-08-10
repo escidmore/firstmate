@@ -290,6 +290,23 @@ exit 1
 SH
   chmod +x "$case_dir/fakebin/gh"
 }
+
+add_gitlab_mr_merged_for_head() {
+  local case_dir=$1 head=$2
+  git -C "$case_dir/wt" push -q origin "$head:refs/merge-requests/7/head"
+  cat > "$case_dir/fakebin/glab" <<'SH'
+#!/usr/bin/env bash
+case "${1:-} ${2:-}" in
+  "mr view")
+    printf '%s\n' 'title: fixture merge request' "state: ${FM_TEST_GLAB_STATE:-merged}" 'author: someone' '--' 'fixture body'
+    exit 0
+    ;;
+esac
+exit 1
+SH
+  chmod +x "$case_dir/fakebin/glab"
+}
+
 append_pr_meta_for_current_head() {
   local case_dir=$1 head
   head=$(git -C "$case_dir/wt" rev-parse HEAD)
@@ -962,6 +979,27 @@ test_recorded_open_pr_does_not_use_content_fallback() {
   pass "a recorded open PR cannot be satisfied by the content fallback"
 }
 
+test_recorded_gitlab_merged_pr_requires_matching_source_head() {
+  local case_dir rc head
+  case_dir=$(make_case recorded-gitlab-merged-pr)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt hello "add feature"
+  head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  printf '%s\n' 'pr=https://gitlab.example/group/project/-/merge_requests/7' \
+    >> "$case_dir/state/task-x1.meta"
+  add_gitlab_mr_merged_for_head "$case_dir" "$head"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "recorded-gitlab-merged-pr: matching merged source head should allow teardown"
+  ! grep -q REFUSED "$case_dir/stderr" \
+    || fail "recorded-gitlab-merged-pr: teardown refused the confirmed GitLab MR"
+  pass "a recorded GitLab MR lands only with merged state and matching source-head proof"
+}
+
 test_recorded_pr_lookup_error_does_not_use_content_fallback() {
   local case_dir rc
   case_dir=$(make_case recorded-pr-error)
@@ -1399,6 +1437,25 @@ test_local_only_force_overrides_unpushed() {
   pass "local-only worktree with unpushed work is torn down under --force (escape hatch)"
 }
 
+test_no_mistakes_force_discards_without_delivery_or_backlog() {
+  local case_dir rc
+  case_dir=$(make_case no-mistakes-force-discard)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt hello "unfinished work"
+
+  set +e
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "no-mistakes-force-discard: --force should discard unfinished work"
+  grep -q 'teardown task-x1 discarded' "$case_dir/stdout" \
+    || fail "no-mistakes-force-discard: teardown did not identify the action as discard"
+  ! grep -q '^Backlog:' "$case_dir/stdout" \
+    || fail "no-mistakes-force-discard: forced discard prompted completion bookkeeping"
+  pass "forced no-mistakes teardown discards unfinished work without claiming delivery"
+}
+
 test_teardown_missing_busy_sidecar_completes() {
   local case_dir gen rc
   case_dir=$(make_case missing-busy-sidecar)
@@ -1587,8 +1644,8 @@ SH
   [ -s "$thlog" ] || fail "herdr-orphan-refusal: the successful retry never returned the isolated copy"
   [ ! -e "$case_dir/state/task-x1.meta" ] || fail "herdr-orphan-refusal: the successful retry left the metadata behind"
   [ ! -e "$case_dir/state/task-x1.status" ] || fail "herdr-orphan-refusal: the successful retry left the status record behind"
-  grep -q "teardown task-x1 complete" "$case_dir/stdout2" \
-    || fail "herdr-orphan-refusal: the successful retry did not report completion"
+  grep -q "teardown task-x1 discarded" "$case_dir/stdout2" \
+    || fail "herdr-orphan-refusal: the successful retry did not report discard"
   pass "herdr flat teardown refuses before returning the isolated copy under lock contention and the retry completes cleanly"
 }
 
@@ -2667,6 +2724,7 @@ test_local_only_merged_to_local_main_allows
 test_no_mistakes_origin_remote_allows
 test_no_mistakes_truly_unpushed_refuses
 test_local_only_force_overrides_unpushed
+test_no_mistakes_force_discards_without_delivery_or_backlog
 test_teardown_missing_busy_sidecar_completes
 test_herdr_teardown_clears_escalation_marker
 test_herdr_flat_teardown_refuses_orphaning_records_then_retry_completes
@@ -2690,6 +2748,7 @@ test_pr_check_does_not_refresh_stale_pr_head
 test_pr_check_records_remote_head_when_local_lags
 test_content_in_default_fallback_allows
 test_recorded_open_pr_does_not_use_content_fallback
+test_recorded_gitlab_merged_pr_requires_matching_source_head
 test_recorded_pr_lookup_error_does_not_use_content_fallback
 test_content_fallback_refreshes_stale_origin_ref
 test_dirty_worktree_refuses

@@ -772,11 +772,23 @@ pr_number_from_target() {
 }
 
 ensure_commit_object() {
-  local target=$1 commit=$2 n
+  local target=$1 commit=$2 n ref provider
   git -C "$WT" cat-file -e "$commit^{commit}" 2>/dev/null && return 0
-  n=$(pr_number_from_target "$target") || return 1
+  if [[ "$target" == https://* ]]; then
+    fm_pr_url_parse "$target" || return 1
+    provider=$FM_PR_PROVIDER
+    n=$FM_PR_NUMBER
+    case "$provider" in
+      github) ref="refs/pull/$n/head" ;;
+      gitlab) ref="refs/merge-requests/$n/head" ;;
+      *) return 1 ;;
+    esac
+  else
+    n=$(pr_number_from_target "$target") || return 1
+    ref="refs/pull/$n/head"
+  fi
   git -C "$WT" remote get-url origin >/dev/null 2>&1 || return 1
-  git -C "$WT" fetch --quiet origin "refs/pull/$n/head" >/dev/null 2>&1 || return 1
+  git -C "$WT" fetch --quiet origin "$ref" >/dev/null 2>&1 || return 1
   git -C "$WT" cat-file -e "$commit^{commit}" 2>/dev/null
 }
 
@@ -813,25 +825,46 @@ EOF
 }
 
 # Is the worktree's PR merged for local work contained in that PR? Resolves the
-# PR from the recorded pr= URL first, then from the branch name, and asks GitHub
-# for both the PR state and head. Returns 0 when the PR is merged, 2 when
+# PR from the recorded pr= URL first, then from the branch name, and asks the
+# applicable provider for both the PR state and head. Returns 0 when the PR is merged, 2 when
 # the provider confirms it is not merged, 3 when a merged head does not contain
 # the local work, and 1 when no PR is found or lookup is unavailable.
 pr_is_merged() {
-  local branch=$1 target view state head current
+  local branch=$1 target view state head current provider
   if [ -n "$PR_URL" ]; then
     target=$PR_URL
+    fm_pr_url_parse "$target" || return 1
+    provider=$FM_PR_PROVIDER
   else
     target=$(pr_number_from_branch "$branch") || return 1
+    provider=github
   fi
   [ -n "$target" ] || return 1
-  view=$(cd "$WT" && gh pr view "$target" --json state,headRefOid -q '.state + "\t" + .headRefOid' 2>/dev/null) || return 1
-  state=${view%%$'\t'*}
-  head=${view#*$'\t'}
-  [ "$state" != "$view" ] || return 1
-  case "$state" in
-    MERGED|merged) ;;
-    OPEN|open|CLOSED|closed) return 2 ;;
+  case "$provider" in
+    github)
+      view=$(cd "$WT" && gh pr view "$target" --json state,headRefOid -q '.state + "\t" + .headRefOid' 2>/dev/null) || return 1
+      state=${view%%$'\t'*}
+      head=${view#*$'\t'}
+      [ "$state" != "$view" ] || return 1
+      case "$state" in
+        MERGED|merged) ;;
+        OPEN|open|CLOSED|closed) return 2 ;;
+        *) return 1 ;;
+      esac
+      ;;
+    gitlab)
+      view=$(cd "$WT" && glab mr view "$FM_PR_NUMBER" -R "https://$FM_PR_HOST/$FM_PR_PATH" 2>/dev/null) || return 1
+      state=$(printf '%s\n' "$view" | sed -n 's/^state:[[:space:]]*//p' | head -1)
+      [ -n "$state" ] || return 1
+      case "$state" in
+        MERGED|merged) ;;
+        OPEN|open|CLOSED|closed) return 2 ;;
+        *) return 1 ;;
+      esac
+      head=$(git -C "$WT" fetch --quiet origin \
+        "refs/merge-requests/$FM_PR_NUMBER/head" >/dev/null 2>&1 \
+        && git -C "$WT" rev-parse --verify FETCH_HEAD^{commit}) || return 1
+      ;;
     *) return 1 ;;
   esac
   fm_pr_head_valid "$head" || return 3
@@ -2333,14 +2366,16 @@ if [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
 fi
 
 # Every landed/discard-work refusal above has now passed (or --force skipped
-# them). Fix 1 and Fix 2 (see script header) run here, unconditionally on
-# --force, and before ANY destructive step below - a still-parked run or a
-# leaked process can own live work in this exact worktree. Not for
+# them). Fix 1 (see script header) applies to ordinary completion, while Fix 2
+# runs for both completion and discard before ANY destructive step below - a
+# still-parked run or a leaked process can own live work in this exact worktree. Not for
 # kind=secondmate: a secondmate home's own runtime lifecycle is owned by the
 # dedicated process-event and firstmate-home removal machinery further below,
 # not by task-worktree cleanup.
 if [ "$KIND" != secondmate ]; then
-  require_task_no_mistakes_delivery "$WT"
+  if [ "$FORCE" != "--force" ]; then
+    require_task_no_mistakes_delivery "$WT"
+  fi
   reap_task_worktree_processes worktree "$WT" "$TASK_TMP"
 fi
 
@@ -2506,5 +2541,9 @@ META_LOCK_HELD=0
 if [ "$KIND" != scout ] && [ "$KIND" != secondmate ] && [ "$MODE" != local-only ]; then
   "$FM_ROOT/bin/fm-fleet-sync.sh" "$PROJ" || true
 fi
-echo "teardown $ID complete (window $T, worktree $WT)"
-backlog_refresh_reminder
+if [ "$FORCE" = "--force" ]; then
+  echo "teardown $ID discarded (window $T, worktree $WT)"
+else
+  echo "teardown $ID complete (window $T, worktree $WT)"
+  backlog_refresh_reminder
+fi

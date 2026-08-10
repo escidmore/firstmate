@@ -1624,6 +1624,16 @@ if [ "$KIND" = ship ]; then
       exit 1
     }
   fi
+  if [ -n "$DELIVERY_TITLE_RULE" ] || [ -n "$DELIVERY_LINK_RULE" ]; then
+    if [ -z "$ISSUE_KEY" ] || [ -z "$BRIEF_ISSUE_KEY" ] \
+      || [ -z "$BRIEF_TITLE_RULE" ] || [ -z "$BRIEF_LINK_RULE" ] \
+      || [ "$BRIEF_ISSUE_KEY" != "$ISSUE_KEY" ] \
+      || [ "$BRIEF_TITLE_RULE" != "$DELIVERY_TITLE_RULE" ] \
+      || [ "$BRIEF_LINK_RULE" != "$DELIVERY_LINK_RULE" ]; then
+      echo "error: durable delivery rules require matching issue, title, and link fields in the brief" >&2
+      exit 1
+    fi
+  fi
   if [ -n "$BRIEF_TITLE_RULE" ] || [ -n "$BRIEF_LINK_RULE" ]; then
     if [ -z "$BRIEF_TITLE_RULE" ] || [ -z "$BRIEF_LINK_RULE" ] \
       || ! fm_pr_delivery_rule_valid "$BRIEF_TITLE_RULE" \
