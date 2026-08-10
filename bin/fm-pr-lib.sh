@@ -175,6 +175,7 @@ fm_pr_provider_fields_load() {
         case "$raw_view" in *$'\n'*) raw_view= ;; esac
         if [ -n "$raw_view" ]; then
           IFS=$'\t' read -r remote_head title body <<< "$raw_view"
+          # shellcheck disable=SC2034 # Consumed by the sourceable PR-check caller.
           FM_PR_PROVIDER_HEAD=$remote_head
           FM_PR_PROVIDER_TITLE=$title
           FM_PR_PROVIDER_BODY=$body
@@ -206,16 +207,16 @@ fm_pr_task_delivery_metadata_valid() {
   link_rule=$(grep '^delivery_link_rule=' "$meta" | tail -1 | cut -d= -f2- || true)
   worktree=$(grep '^worktree=' "$meta" | tail -1 | cut -d= -f2- || true)
   [ -z "$issue_key" ] || printf '%s\n' "$issue_key" | grep -Eq '^[A-Z][A-Z0-9]*-[0-9]+$' || {
-    FM_PR_DELIVERY_ERROR=invalid-issue-key
+    FM_PR_DELIVERY_ERROR='invalid-issue-key'
     return 1
   }
   if [ -n "$title_rule" ] || [ -n "$link_rule" ]; then
-    [ -n "$title_rule" ] && [ -n "$link_rule" ] \
-      && fm_pr_delivery_rule_valid "$title_rule" \
-      && fm_pr_delivery_rule_valid "$link_rule" || {
-        FM_PR_DELIVERY_ERROR=invalid-delivery-rule
-        return 1
-      }
+    if [ -z "$title_rule" ] || [ -z "$link_rule" ] \
+      || ! fm_pr_delivery_rule_valid "$title_rule" \
+      || ! fm_pr_delivery_rule_valid "$link_rule"; then
+      FM_PR_DELIVERY_ERROR='invalid-delivery-rule'
+      return 1
+    fi
   fi
   [ -z "$issue_key" ] || [ -z "$title_rule" ] || [ -z "$link_rule" ] || FM_PR_DELIVERY_RULE=1
   FM_PR_DELIVERY_ISSUE_KEY=$issue_key
@@ -228,17 +229,17 @@ fm_pr_task_delivery_provider_fields_valid() {
   FM_PR_DELIVERY_ERROR=
   [ "$FM_PR_DELIVERY_RULE" = 1 ] || return 0
   [ -n "$FM_PR_PROVIDER_TITLE" ] && [ -n "$FM_PR_PROVIDER_BODY" ] || {
-    FM_PR_DELIVERY_ERROR=provider-fields
+    FM_PR_DELIVERY_ERROR='provider-fields'
     return 1
   }
   fm_pr_delivery_title_matches \
     "$FM_PR_PROVIDER_TITLE" "$FM_PR_DELIVERY_TITLE_RULE" "$FM_PR_DELIVERY_ISSUE_KEY" || {
-      FM_PR_DELIVERY_ERROR=title-mismatch
+      FM_PR_DELIVERY_ERROR='title-mismatch'
       return 1
     }
   fm_pr_delivery_body_links_issue \
     "$FM_PR_PROVIDER_BODY" "$FM_PR_DELIVERY_LINK_RULE" "$FM_PR_DELIVERY_ISSUE_KEY" || {
-      FM_PR_DELIVERY_ERROR=body-link-mismatch
+      FM_PR_DELIVERY_ERROR='body-link-mismatch'
       return 1
     }
 }
@@ -250,7 +251,8 @@ fm_pr_task_delivery_fields_valid() {
   [ "$FM_PR_DELIVERY_RULE" = 1 ] && provider_required=1
   fm_pr_provider_fields_load "$provider" "$url" "$host" "$path" "$number" \
     "$FM_PR_DELIVERY_WORKTREE" "$provider_required" || {
-      FM_PR_DELIVERY_ERROR=provider-fields
+      # shellcheck disable=SC2034 # Consumed by the sourceable PR-check caller.
+      FM_PR_DELIVERY_ERROR='provider-fields'
       return 1
     }
   fm_pr_task_delivery_provider_fields_valid
