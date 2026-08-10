@@ -426,6 +426,7 @@ if [ "${FM_TEARDOWN_GUARD_DONE:-0}" != 1 ]; then
 fi
 HOME_PATH=$(grep '^home=' "$META" | cut -d= -f2- || true)
 PR_URL=$(grep '^pr=' "$META" | tail -1 | cut -d= -f2- || true)
+PR_HEAD=$(grep '^pr_head=' "$META" | tail -1 | cut -d= -f2- || true)
 # tasktmp is recorded by fm-spawn for tasks that set up a per-task temp root
 # (/tmp/fm-<id>/); absent for tasks spawned before that change, so tolerate empty.
 TASK_TMP=$(grep '^tasktmp=' "$META" | cut -d= -f2- || true)
@@ -868,6 +869,10 @@ pr_is_merged() {
     *) return 1 ;;
   esac
   fm_pr_head_valid "$head" || return 3
+  if [ -n "$PR_HEAD" ]; then
+    fm_pr_head_valid "$PR_HEAD" || return 3
+    [ "$PR_HEAD" = "$head" ] || return 3
+  fi
   ensure_commit_object "$target" "$head" || return 1
   current=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
   git -C "$WT" merge-base --is-ancestor "$current" "$head" 2>/dev/null && return 0
