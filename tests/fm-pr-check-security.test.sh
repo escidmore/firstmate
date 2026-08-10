@@ -268,11 +268,10 @@ run_check_entry() {
 run_merge_entry() {
   local dir=$1
   shift
-  FM_ROOT_OVERRIDE="$dir/root" FM_HOME="$dir/home" \
+  BASH_ENV=/dev/null FM_ROOT_OVERRIDE="$dir/root" FM_HOME="$dir/home" \
     FM_TEST_GUARD_LOG="$dir/guard.log" FM_TEST_GH_LOG="$dir/gh.log" \
     FM_TEST_GH_AXI_LOG="$dir/gh-axi.log" FM_TEST_GLAB_LOG="$dir/glab.log" \
-    PATH="$dir/fakebin:$BASE_PATH" \
-    "$PR_MERGE" "$@"
+    PATH="$dir/fakebin:$BASE_PATH" "$PR_MERGE" "$@"
 }
 
 # shellcheck disable=SC2016 # Literal rejected URL bytes are parser test data.

@@ -148,7 +148,7 @@ test_spawn_records_the_brief_issue_key() {
   rec=$(make_settle_case settle-issue "$id" 0 fixture-project)
   read_settle_record "$rec"
   brief="$HOME_DIR/data/$id/brief.md"
-  printf '%s\n' 'Delivery contract: mode=no-mistakes' 'Delivery issue: ORC-88' > "$brief"
+  printf '%s\n' 'Delivery contract: mode=no-mistakes' 'Delivery issue: TASK-88' > "$brief"
 
   out=$(run_settle_spawn "$id")
   status=$?
@@ -156,10 +156,10 @@ test_spawn_records_the_brief_issue_key() {
   assert_contains "$out" "delivery issue mismatch" \
     "spawn did not explain the missing issue key"
 
-  out=$(run_settle_spawn "$id" ORC-88)
+  out=$(run_settle_spawn "$id" TASK-88)
   status=$?
   expect_code 0 "$status" "spawn with the brief's issue key should succeed"
-  assert_grep 'issue_key=ORC-88' "$HOME_DIR/state/$id.meta" \
+  assert_grep 'issue_key=TASK-88' "$HOME_DIR/state/$id.meta" \
     "spawn metadata did not retain the intake issue key"
   pass "spawn records the brief issue key in task metadata"
 }

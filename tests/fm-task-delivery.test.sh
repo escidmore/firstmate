@@ -153,8 +153,8 @@ test_spawn_refuses_an_issue_key_mismatch() {
   IFS='|' read -r home proj fakebin <<EOF
 $rec
 EOF
-  write_brief "$home" delivery-issue-b4 no-mistakes ORC-41
-  out=$(run_spawn "$home" "$fakebin" delivery-issue-b4 "$proj" claude --mode no-mistakes --yolo off --issue-key ORC-42)
+  write_brief "$home" delivery-issue-b4 no-mistakes TASK-41
+  out=$(run_spawn "$home" "$fakebin" delivery-issue-b4 "$proj" claude --mode no-mistakes --yolo off --issue-key TASK-42)
   status=$?
   [ "$status" -ne 0 ] || fail "a brief/spawn issue-key mismatch should exit non-zero"
   assert_contains "$out" "delivery issue mismatch for delivery-issue-b4" \
