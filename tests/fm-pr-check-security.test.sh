@@ -784,6 +784,37 @@ test_declared_delivery_rule_precedes_registration_and_merge() {
     || fail "provider rejection recorded new PR metadata"
   pass "declared delivery fields fail closed before registration and guarded merge"
 }
+test_metadata_change_refuses_before_publication() {
+  local dir state rc
+  dir=$(make_case metadata-change)
+  state="$dir/home/state"
+  write_delivery_task_meta "$dir" TASK-91 '{issue_key}:' 'https://tracker.example/issue/{issue_key}'
+  cat > "$dir/fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_TEST_GH_LOG"
+case " $* " in
+  *" headRefOid,title,body "*)
+    printf '%s\t%s\t%s\n' \
+      0123456789abcdef0123456789abcdef01234567 \
+      'TASK-91:guard delivery' \
+      'Tracks https://tracker.example/issue/TASK-91/guard-delivery'
+    printf 'issue_key=TASK-92\n' >> "$FM_TEST_RACE_META"
+    ;;
+esac
+SH
+  chmod +x "$dir/fakebin/gh"
+  set +e
+  FM_TEST_RACE_META="$state/task-a.meta" run_check_entry "$dir" task-a \
+    https://github.com/o/r/pull/91 > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "metadata change during provider validation was accepted"
+  assert_contains "$(cat "$dir/stderr")" "task metadata changed during PR validation" \
+    "metadata race refusal was not explicit"
+  ! grep -q '^pr=' "$state/task-a.meta" || fail "metadata race reached PR registration"
+  assert_poll_absent "$state" task-a
+  pass "metadata changes during provider validation fail closed before publication"
+}
 run_watcher_bounded() {
   local home=$1 fakebin=$2 check_interval=${FM_TEST_CHECK_INTERVAL:-0} watch_root=${FM_TEST_WATCH_ROOT:-$ROOT}
   shift 2
@@ -3480,6 +3511,7 @@ test_gitlab_merged_poll_retires
 test_invalid_entrypoints_have_zero_side_effects
 test_valid_recording_and_merge_derivation
 test_declared_delivery_rule_precedes_registration_and_merge
+test_metadata_change_refuses_before_publication
 test_rejected_metacharacter_bytes_are_inert
 test_static_poll_contract
 test_atomic_interruption_leaves_no_partial_artifact
