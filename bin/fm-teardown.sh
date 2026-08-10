@@ -815,7 +815,8 @@ EOF
 # Is the worktree's PR merged for local work contained in that PR? Resolves the
 # PR from the recorded pr= URL first, then from the branch name, and asks GitHub
 # for both the PR state and head. Returns 0 when the PR is merged, 2 when
-# the provider confirms it is not merged, and 1 when no PR is found or lookup is unavailable.
+# the provider confirms it is not merged, 3 when a merged head does not contain
+# the local work, and 1 when no PR is found or lookup is unavailable.
 pr_is_merged() {
   local branch=$1 target view state head current
   if [ -n "$PR_URL" ]; then
@@ -837,7 +838,8 @@ pr_is_merged() {
   ensure_commit_object "$target" "$head" || return 1
   current=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
   git -C "$WT" merge-base --is-ancestor "$current" "$head" 2>/dev/null && return 0
-  unpushed_patches_are_in_pr_head "$head"
+  unpushed_patches_are_in_pr_head "$head" && return 0
+  return 3
 }
 
 # Is the branch's content already present in the up-to-date default branch? Fetches
@@ -877,7 +879,9 @@ work_is_landed() {
   else
     pr_result=$?
   fi
-  [ "$pr_result" -eq 2 ] && return 1
+  if [ "$pr_result" -eq 2 ] || [ "$pr_result" -eq 3 ]; then
+    return 1
+  fi
   content_in_default
 }
 

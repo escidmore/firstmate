@@ -151,6 +151,66 @@ fm_pr_delivery_body_links_issue() {
   ' <<< "$body"
 }
 
+fm_pr_provider_fields_load() {
+  local provider=$1 url=$2 host=$3 path=$4 number=$5 worktree=$6 required=${7:-1}
+  local raw_view remote_head title body
+  FM_PR_PROVIDER_HEAD=
+  FM_PR_PROVIDER_TITLE=
+  FM_PR_PROVIDER_BODY=
+  [ "$required" = 1 ] || return 0
+  case "$provider" in
+    github)
+      if [ -n "$worktree" ] && [ -d "$worktree" ] && command -v gh >/dev/null 2>&1; then
+        raw_view=$(cd "$worktree" && gh pr view "$url" --json headRefOid,title,body --jq '[.headRefOid, .title, .body] | @tsv' 2>/dev/null) || raw_view=
+        case "$raw_view" in *$'\n'*) raw_view= ;; esac
+        if [ -n "$raw_view" ]; then
+          IFS=$'\t' read -r remote_head title body <<< "$raw_view"
+          FM_PR_PROVIDER_HEAD=$remote_head
+          FM_PR_PROVIDER_TITLE=$title
+          FM_PR_PROVIDER_BODY=$body
+        fi
+      fi
+      ;;
+    forgejo)
+      raw_view=$(forgejo-axi pr view --base-url "https://$host" --repo "$path" "$number" --full 2>/dev/null) || raw_view=
+      remote_head=$(printf '%s\n' "$raw_view" | awk '
+        /^pull_request:[[:space:]]*$/ { in_pull = 1; next }
+        in_pull && /^[^[:space:]]/ { exit }
+        in_pull && /^  head_sha:[[:space:]]*/ {
+          sub(/^  head_sha:[[:space:]]*/, "")
+          print
+          exit
+        }
+      ')
+      title=$(printf '%s\n' "$raw_view" | sed -n 's/^[[:space:]]*title:[[:space:]]*//p' | head -1)
+      title=${title#\"}
+      title=${title%\"}
+      body=$(printf '%s\n' "$raw_view" | awk '
+        !found && /^[[:space:]]*body:[[:space:]]*/ {
+          body = $0
+          sub(/^[[:space:]]*body:[[:space:]]*/, "", body)
+          found = 1
+          in_body = 1
+          next
+        }
+        in_body { body = body "\n" $0 }
+        END { if (found) print body }
+      ')
+      FM_PR_PROVIDER_HEAD=$remote_head
+      FM_PR_PROVIDER_TITLE=$title
+      FM_PR_PROVIDER_BODY=$body
+      ;;
+    gitlab)
+      raw_view=$(glab mr view "$number" -R "https://$host/$path" 2>/dev/null) || raw_view=
+      title=$(printf '%s\n' "$raw_view" | sed -n 's/^title:[[:space:]]*//p' | head -1)
+      body=$(printf '%s\n' "$raw_view" | sed -n '/^--$/,$p' | sed '1d')
+      FM_PR_PROVIDER_TITLE=$title
+      FM_PR_PROVIDER_BODY=$body
+      ;;
+    *) return 1 ;;
+  esac
+}
+
 # GitLab serves self-hosted instances, so the host is part of the identity
 # rather than a constant. It is accepted only as a lowercase DNS name with no
 # userinfo, port, or trailing dot, which keeps one canonical spelling per MR.

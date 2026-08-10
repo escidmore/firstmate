@@ -513,6 +513,32 @@ metadata_pr_is_canonical() {
   MIGRATION_NUMBER=$FM_PR_META_NUMBER
 }
 
+migration_task_delivery_fields_valid() {
+  local meta=$1 provider=$2 url=$3 host=$4 path=$5 number=$6
+  local project issue_key title_rule link_rule worktree delivery_rule
+  project=$(grep '^project=' "$meta" | tail -1 | cut -d= -f2- || true)
+  issue_key=$(grep '^issue_key=' "$meta" | tail -1 | cut -d= -f2- || true)
+  title_rule=$(grep '^delivery_title_rule=' "$meta" | tail -1 | cut -d= -f2- || true)
+  link_rule=$(grep '^delivery_link_rule=' "$meta" | tail -1 | cut -d= -f2- || true)
+  worktree=$(grep '^worktree=' "$meta" | tail -1 | cut -d= -f2- || true)
+  [ -z "$issue_key" ] || printf '%s\n' "$issue_key" | grep -Eq '^[A-Z][A-Z0-9]*-[0-9]+$' || return 1
+  if [ -n "$title_rule" ] || [ -n "$link_rule" ]; then
+    [ -n "$title_rule" ] && [ -n "$link_rule" ] \
+      && fm_pr_delivery_rule_valid "$title_rule" \
+      && fm_pr_delivery_rule_valid "$link_rule" || return 1
+  fi
+  delivery_rule=0
+  [ -z "$issue_key" ] || [ -z "$title_rule" ] || [ -z "$link_rule" ] || delivery_rule=1
+  if [ "$provider" = forgejo ]; then
+    fm_pr_forgejo_project_authorized "$project" "$host" || return 1
+  fi
+  if [ "$delivery_rule" = 1 ]; then
+    fm_pr_provider_fields_load "$provider" "$url" "$host" "$path" "$number" "$worktree" 1 || return 1
+    fm_pr_delivery_title_matches "$FM_PR_PROVIDER_TITLE" "$title_rule" "$issue_key" || return 1
+    fm_pr_delivery_body_links_issue "$FM_PR_PROVIDER_BODY" "$link_rule" "$issue_key" || return 1
+  fi
+}
+
 quarantine_artifact() {
   local source=$1 prefix=$2 kind=$3 destination source_device
   [ -e "$source" ] || [ -L "$source" ] || return 0
@@ -720,7 +746,16 @@ remove_diagnostic_obligation() {
 }
 
 canonical_terminal_success() {
-  local id=$1
+  local id=$1 meta provider url host path number
+  meta="$STATE/$id.meta"
+  metadata_pr_is_canonical "$meta" || return 1
+  provider=$MIGRATION_PROVIDER
+  url=$MIGRATION_URL
+  host=$MIGRATION_HOST
+  path=$MIGRATION_PATH
+  number=$MIGRATION_NUMBER
+  migration_task_delivery_fields_valid "$meta" "$provider" "$url" "$host" "$path" "$number" \
+    || return 1
   fm_pr_poll_artifacts_valid "$STATE" "$id" "$TEMPLATE" \
     && quarantined_artifact_exists "$id" check
 }
@@ -799,6 +834,8 @@ canonical_repair_from_pending() {
   quarantine_artifact "$registration" "$id" registration || return 1
   [ ! -e "$data" ] && [ ! -L "$data" ] || return 1
   [ ! -e "$registration" ] && [ ! -L "$registration" ] || return 1
+  migration_task_delivery_fields_valid "$meta" "$provider" "$url" "$host" "$path" "$number" \
+    || return 1
   fm_pr_poll_prepare "$STATE" "$id" "$provider" "$url" "$host" "$path" "$number" "$TEMPLATE" || return 1
   fm_pr_poll_publish_prepared || return 1
   canonical_terminal_success "$id"
@@ -1052,6 +1089,7 @@ if migration_needed; then
         if quarantine_artifact "$check" "$prefix" check \
           && quarantine_artifact "$data" "$prefix" data \
           && quarantine_artifact "$registration" "$prefix" registration \
+          && migration_task_delivery_fields_valid "$meta" "$provider" "$url" "$host" "$path" "$number" \
           && fm_pr_poll_prepare "$STATE" "$id" "$provider" "$url" "$host" "$path" "$number" "$TEMPLATE" \
           && fm_pr_poll_publish_prepared \
           && complete_canonical_outcome "$id"; then

@@ -113,17 +113,14 @@ fi
 PR_HEAD=
 PR_TITLE=
 PR_BODY=
-if [ "$PROVIDER" = github ] && [ -n "$WT" ] && [ -d "$WT" ] && command -v gh >/dev/null 2>&1; then
-  PR_VIEW=$(cd "$WT" && gh pr view "$URL" --json headRefOid,title,body --jq '[.headRefOid, .title, .body] | @tsv' 2>/dev/null) || PR_VIEW=
-  case "$PR_VIEW" in *$'\n'*) PR_VIEW= ;; esac
-  if [ -n "$PR_VIEW" ]; then
-    IFS=$'\t' read -r REMOTE_HEAD PR_TITLE PR_BODY <<< "$PR_VIEW"
-    fm_pr_head_valid "$REMOTE_HEAD" && PR_HEAD=$REMOTE_HEAD
-  fi
-elif [ "$PROVIDER" = gitlab ] && [ "$DELIVERY_RULE" = 1 ]; then
-  RAW_VIEW=$(glab mr view "$NUMBER" -R "https://$HOST/$PROJECT_PATH" 2>/dev/null) || RAW_VIEW=
-  PR_TITLE=$(printf '%s\n' "$RAW_VIEW" | sed -n 's/^title:[[:space:]]*//p' | head -1)
-  PR_BODY=$(printf '%s\n' "$RAW_VIEW" | sed -n '/^--$/,$p' | sed '1d')
+PROVIDER_FIELDS_REQUIRED=1
+[ "$PROVIDER" = gitlab ] && PROVIDER_FIELDS_REQUIRED=$DELIVERY_RULE
+fm_pr_provider_fields_load "$PROVIDER" "$URL" "$HOST" "$PROJECT_PATH" "$NUMBER" "$WT" \
+  "$PROVIDER_FIELDS_REQUIRED" || exit 1
+PR_TITLE=$FM_PR_PROVIDER_TITLE
+PR_BODY=$FM_PR_PROVIDER_BODY
+if fm_pr_head_valid "$FM_PR_PROVIDER_HEAD"; then
+  PR_HEAD=$FM_PR_PROVIDER_HEAD
 fi
 
 validate_provider_delivery_fields || exit 1
