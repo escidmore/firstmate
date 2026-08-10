@@ -210,7 +210,7 @@ fm_pr_task_delivery_metadata_valid() {
     return 1
   }
   if [ -n "$title_rule" ] || [ -n "$link_rule" ]; then
-    if [ -z "$title_rule" ] || [ -z "$link_rule" ] \
+    if [ -z "$issue_key" ] || [ -z "$title_rule" ] || [ -z "$link_rule" ] \
       || ! fm_pr_delivery_rule_valid "$title_rule" \
       || ! fm_pr_delivery_rule_valid "$link_rule"; then
       FM_PR_DELIVERY_ERROR='invalid-delivery-rule'

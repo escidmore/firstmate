@@ -267,6 +267,16 @@ test_promote_requires_and_records_the_delivery_contract() {
     "issue-less promotion emitted provider guidance without an issue key"
 
   write_scout_meta
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" promote-d1 --mode no-mistakes --yolo on \
+    --delivery-title-rule '{issue_key}:' \
+    --delivery-link-rule 'https://tracker.example/issue/{issue_key}' 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "promotion without an issue key should reject delivery rules"
+  assert_contains "$out" "delivery rules require an issue key" \
+    "promotion did not reject delivery rules without an issue key"
+  assert_grep 'kind=scout' "$meta" "rejected unbound promotion changed the task record"
+
+  write_scout_meta
   write_brief "$home" promote-d1
   out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" promote-d1 --mode no-mistakes --yolo on \
     --issue-key TASK-77 --delivery-title-rule '{issue_key}:' \
@@ -279,6 +289,10 @@ test_promote_requires_and_records_the_delivery_contract() {
   assert_grep 'issue_key=TASK-77' "$meta" "promotion did not record the intake issue key"
   grep -qx 'Delivery issue: TASK-77' "$home/data/promote-d1/brief.md" \
     || fail "promotion did not record the issue key in the promoted brief"
+  grep -qx 'Delivery title rule: {issue_key}:' "$home/data/promote-d1/brief.md" \
+    || fail "promotion did not record the title rule in the promoted brief"
+  grep -qx 'Delivery link rule: https://tracker.example/issue/{issue_key}' "$home/data/promote-d1/brief.md" \
+    || fail "promotion did not record the link rule in the promoted brief"
   assert_grep 'delivery_title_rule={issue_key}:' "$meta" "promotion did not record the title rule"
   assert_grep 'delivery_link_rule=https://tracker.example/issue/{issue_key}' "$meta" "promotion did not record the link rule"
   assert_contains "$out" "ship instructions for mode=no-mistakes" "promotion hint did not carry the decided mode"

@@ -870,8 +870,9 @@ content_in_default() {
 # Has the worktree's committed work actually LANDED, though its commits are not
 # reachable from any remote-tracking branch? True when a merged PR proves the
 # current local work is contained in the PR head, OR the content is already in the
-# default branch when no PR applies or its lookup is unavailable. A provider-confirmed
-# open or closed PR is not landed even when the content also appears in the default branch.
+# default branch when no PR is recorded and no applicable PR is confirmed. A provider-
+# confirmed open or closed PR is not landed even when the content also appears in the
+# default branch.
 work_is_landed() {
   local branch=$1 pr_result
   if pr_is_merged "$branch"; then
@@ -879,6 +880,7 @@ work_is_landed() {
   else
     pr_result=$?
   fi
+  [ -n "$PR_URL" ] && return "$pr_result"
   if [ "$pr_result" -eq 2 ] || [ "$pr_result" -eq 3 ]; then
     return 1
   fi

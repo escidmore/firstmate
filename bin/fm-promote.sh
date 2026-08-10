@@ -94,8 +94,10 @@ if [ "$ISSUE_KEY_SET" -eq 1 ] && ! printf '%s\n' "$ISSUE_KEY" | grep -Eq '^[A-Z]
 fi
 if [ "$DELIVERY_TITLE_RULE_SET" -ne "$DELIVERY_LINK_RULE_SET" ] \
   || { [ "$DELIVERY_TITLE_RULE_SET" -eq 1 ] \
-    && { ! fm_pr_delivery_rule_valid "$DELIVERY_TITLE_RULE" || ! fm_pr_delivery_rule_valid "$DELIVERY_LINK_RULE"; }; }; then
-  echo "error: delivery rules require valid title and link templates containing {issue_key}" >&2
+    && { [ -z "$ISSUE_KEY" ] \
+      || ! fm_pr_delivery_rule_valid "$DELIVERY_TITLE_RULE" \
+      || ! fm_pr_delivery_rule_valid "$DELIVERY_LINK_RULE"; }; }; then
+  echo "error: delivery rules require an issue key and valid title and link templates containing {issue_key}" >&2
   exit 1
 fi
 
@@ -139,15 +141,15 @@ BRIEF="$FM_HOME/data/$ID/brief.md"
 if [ -n "$ISSUE_KEY" ]; then
   [ -f "$BRIEF" ] || { echo "error: issue-backed promotion requires the scout brief at $BRIEF" >&2; exit 1; }
   BRIEF_TMP="$FM_HOME/data/$ID/.brief.promote.${BASHPID:-$$}"
-  awk -v issue_key="$ISSUE_KEY" '
-    BEGIN { line = "Delivery issue: " issue_key }
-    /^Delivery issue: / {
-      if (!seen) { print line; seen = 1 }
-      next
-    }
+  awk '
+    /^Delivery issue: / || /^Delivery title rule: / || /^Delivery link rule: / { next }
     { print }
-    END { if (!seen) print line }
   ' "$BRIEF" > "$BRIEF_TMP"
+  {
+    printf 'Delivery issue: %s\n' "$ISSUE_KEY"
+    [ -z "$DELIVERY_TITLE_RULE" ] || printf 'Delivery title rule: %s\n' "$DELIVERY_TITLE_RULE"
+    [ -z "$DELIVERY_LINK_RULE" ] || printf 'Delivery link rule: %s\n' "$DELIVERY_LINK_RULE"
+  } >> "$BRIEF_TMP"
   grep -Fx "Delivery issue: $ISSUE_KEY" "$BRIEF_TMP" >/dev/null || {
     echo "error: could not record the issue key in $BRIEF" >&2
     exit 1

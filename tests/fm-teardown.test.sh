@@ -590,6 +590,7 @@ test_teardown_prompts_tasks_axi_done_when_compatible() {
   case_dir=$(make_case tasks-axi-reminder)
   write_meta "$case_dir" no-mistakes ship
   printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
+  add_gh_pr_merged_for_head "$case_dir" "$(git -C "$case_dir/wt" rev-parse HEAD)"
   add_compatible_tasks_axi "$case_dir"
 
   out=$(run_teardown "$case_dir") || fail "teardown failed with compatible tasks-axi"
@@ -609,6 +610,7 @@ test_teardown_manual_backend_prompts_hand_edit_even_when_tasks_axi_present() {
   case_dir=$(make_case tasks-axi-manual-optout)
   write_meta "$case_dir" no-mistakes ship
   printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
+  add_gh_pr_merged_for_head "$case_dir" "$(git -C "$case_dir/wt" rev-parse HEAD)"
   printf '%s\n' manual > "$case_dir/config/backlog-backend"
   add_compatible_tasks_axi "$case_dir"
 
@@ -958,6 +960,25 @@ test_recorded_open_pr_does_not_use_content_fallback() {
   expect_code 1 "$rc" "recorded-open-pr: an open PR should refuse even when content is in default"
   grep -q REFUSED "$case_dir/stderr" || fail "recorded-open-pr: no REFUSED line in stderr"
   pass "a recorded open PR cannot be satisfied by the content fallback"
+}
+
+test_recorded_pr_lookup_error_does_not_use_content_fallback() {
+  local case_dir rc
+  case_dir=$(make_case recorded-pr-error)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt hello "add feature"
+  append_pr_meta_url "$case_dir"
+  land_on_origin_main "$case_dir" feature.txt hello
+  add_gh_axi_error "$case_dir"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "recorded-pr-error: a PR lookup error should refuse even when content is in default"
+  grep -q REFUSED "$case_dir/stderr" || fail "recorded-pr-error: no REFUSED line in stderr"
+  pass "a recorded PR lookup error cannot use the content fallback"
 }
 
 test_content_fallback_refreshes_stale_origin_ref() {
@@ -2669,6 +2690,7 @@ test_pr_check_does_not_refresh_stale_pr_head
 test_pr_check_records_remote_head_when_local_lags
 test_content_in_default_fallback_allows
 test_recorded_open_pr_does_not_use_content_fallback
+test_recorded_pr_lookup_error_does_not_use_content_fallback
 test_content_fallback_refreshes_stale_origin_ref
 test_dirty_worktree_refuses
 test_gh_error_and_content_absent_refuses

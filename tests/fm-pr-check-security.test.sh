@@ -698,9 +698,12 @@ test_declared_delivery_rule_precedes_registration_and_merge() {
     run_check_entry "$dir" task-a https://github.com/o/r/pull/91 > "$dir/stdout" 2> "$dir/stderr"
   rc=$?
   set -e
-  [ "$rc" -eq 0 ] || fail "a declared rule without an issue key should not block registration"
-  grep -q '^pr=' "$dir/home/state/task-a.meta" \
-    || fail "missing issue metadata blocked an unbound rule"
+  [ "$rc" -ne 0 ] || fail "a declared rule without an issue key should block registration"
+  assert_contains "$(cat "$dir/stderr")" "invalid delivery rule" \
+    "missing issue metadata did not reject the unbound rule"
+  ! grep -q '^pr=' "$dir/home/state/task-a.meta" \
+    || fail "missing issue metadata reached PR registration"
+  assert_poll_absent "$dir/home/state" task-a
 
   dir=$(make_case rule-missing-rule)
   write_delivery_task_meta "$dir" TASK-91
