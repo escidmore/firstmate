@@ -2240,6 +2240,9 @@ checks-passed|checks-passed
 pr-ready|pr-ready
 commit-only|commit-only
 unknown|unknown
+new|new
+error|error
+ask-user|ask-user
 failed|failed
 cancelled|cancelled
 incomplete|incomplete

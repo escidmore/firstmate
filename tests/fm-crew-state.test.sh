@@ -702,6 +702,22 @@ test_terminal_alternate_success() {
   pass "alternate successful terminal outcome is authoritative"
 }
 
+test_terminal_unrecognized_outcome_is_not_done() {
+  local outcome d out
+  for outcome in error ask-user; do
+    reset_fakes
+    d=$(new_case "unrecognized-$outcome")
+    make_repo_on_branch "$d/wt" "fm/feat-$outcome"
+    make_fakebin "$d" >/dev/null
+    fm_write_meta "$d/state/feat-$outcome.meta" "window=fm:fm-feat-$outcome" "worktree=$d/wt" "kind=ship"
+    FM_FAKE_AXI_STATUS="$(run_terminal "fm/feat-$outcome" "$outcome")"
+    out=$(run_crew_state "$d" "feat-$outcome")
+    assert_contains "$out" "state: unknown" "$outcome outcome -> unknown"
+    assert_not_contains "$out" "state: done" "$outcome outcome must not be done"
+  done
+  pass "unrecognized terminal outcomes never satisfy delivery completion"
+}
+
 test_checks_passed_is_pr_ready_not_complete() {
   reset_fakes
   local d; d=$(new_case checks-passed)
@@ -1401,6 +1417,7 @@ test_top_level_fixing_ci_running_after_green_stays_working
 test_top_level_fixing_done_log_stays_working
 test_terminal_passed
 test_terminal_alternate_success
+test_terminal_unrecognized_outcome_is_not_done
 test_checks_passed_is_pr_ready_not_complete
 test_terminal_failed
 test_cross_branch_attribution_via_runs_list

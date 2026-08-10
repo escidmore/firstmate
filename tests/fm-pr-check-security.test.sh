@@ -755,7 +755,8 @@ test_declared_delivery_rule_precedes_registration_and_merge() {
         ;;
       forgejo)
         url=https://forgejo.example/owner/repo/pulls/91
-        FM_TEST_FORGEJO_TITLE="$valid_title" FM_TEST_FORGEJO_BODY="$valid_body" \
+        FM_TEST_FORGEJO_TITLE="$valid_title" \
+        FM_TEST_FORGEJO_BODY=$'review context\n'"$valid_body" \
           run_check_entry "$dir" task-a "$url" \
           || fail "$provider registration rejected matching declared delivery fields"
         ;;
