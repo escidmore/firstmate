@@ -249,11 +249,12 @@ SH
 # --- 1. same-harness relaunch -----------------------------------------------
 
 test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint() {
-  local dir out rc gen_before gen_after
+  local dir out rc gen_before gen_after spawn_after
   dir=$(new_case same rl1)
   add_ship_task "$dir" rl1 claude
   gen_before=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" rl1)
   printf 'busy_gen=%s\n' "$gen_before" >> "$dir/home/state/rl1.meta"
+  printf 'spawn_gen=%s\n' 's0.stale' >> "$dir/home/state/rl1.meta"
   out=$(run_control "$dir" rl1 relaunch --note "stopped mid-refactor"); rc=$?
   expect_code 0 "$rc" "a same-harness relaunch should succeed"$'\n'"$out"
   assert_contains "$out" "relaunched rl1 harness=claude from=claude" "the outcome should name the transition"
@@ -266,6 +267,11 @@ test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint() {
   gen_after=$(meta_field "$dir" rl1 busy_gen)
   [ -n "$gen_after" ] && [ "$gen_after" != "$gen_before" ] \
     || fail "a relaunch must arm a fresh busy generation, got '$gen_after'"
+  [ "$(grep -c '^spawn_gen=' "$dir/home/state/rl1.meta")" = 1 ] \
+    || fail "a relaunch must leave exactly one spawn incarnation line"
+  spawn_after=$(meta_field "$dir" rl1 spawn_gen)
+  [ -n "$spawn_after" ] && [ "$spawn_after" != s0.stale ] \
+    || fail "a relaunch must mint a fresh spawn incarnation, got '$spawn_after'"
   [ "$(journal_field "$dir" rl1 phase)" = complete ] \
     || fail "the transaction journal should end complete"
   assert_grep "/exit" "$dir/fake/literal" "the previous agent should have been exited"
