@@ -230,12 +230,14 @@ process.stdout.write(fields.join("\0") + "\0");
         FM_PR_PROVIDER_HEAD=$remote_head
         FM_PR_PROVIDER_TITLE=$title
         FM_PR_PROVIDER_BODY=$body
+        # shellcheck disable=SC2034 # Output global consumed by sourceable callers.
         FM_PR_PROVIDER_STATE=$state
       fi
       ;;
     *) return 1 ;;
   esac
   fm_pr_head_valid "$FM_PR_PROVIDER_HEAD" || return 1
+  # shellcheck disable=SC2034 # Output global consumed by sourceable callers.
   FM_PR_PROVIDER_FIELDS_STATUS=loaded
 }
 
