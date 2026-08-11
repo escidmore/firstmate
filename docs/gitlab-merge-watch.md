@@ -29,14 +29,18 @@ A GitLab project also sits under at least one group at no fixed depth, so no own
 The stored record therefore carries `provider`, `url`, `host`, `path`, and `number`, and every consumer rebuilds the URL from those parts and refuses any record that does not reconstruct the stored URL exactly.
 `tests/fm-pr-check-security.test.sh` asserts that neither `bin/fm-pr-lib.sh` nor `bin/fm-pr-poll.sh` contains the string `gitlab.com` at all.
 
+## Current provider snapshot contract
+
+Firstmate reads the JSON output's top-level `sha`, `title`, and `description` fields from one provider observation.
+The head is accepted only when it is an exact commit hash, so a changed output format produces no registration rather than an unbound delivery record.
+`tests/fm-pr-check-security.test.sh` verifies this contract hermetically through registration behavior, including distinct top-level and nested heads and a changed title in the same JSON snapshot.
+
 ## How plain glab is invoked, and why
 
-Two things about plain `glab` were established by running it, because assuming either one would have failed silently into a permanent "not merged".
+The dated live transcript below establishes two separate plain `glab` facts used by that implementation.
 
 First, plain `glab` has no field selector.
 `gh` reads one field with `--json state -q .state`; `glab mr view` offers only `-F, --output string  Format output as: text, json`.
-Firstmate reads the JSON output's top-level `sha`, `title`, and `description` fields from one provider observation.
-The head is accepted only when it is an exact commit hash, so a changed output format produces no registration rather than an unbound delivery record.
 
 Second, `glab` cannot take a merge request URL the way `gh pr view` can.
 That form shells out to git for the current repository, and the watcher runs in no repository:

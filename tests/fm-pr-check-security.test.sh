@@ -1068,6 +1068,30 @@ test_migration_rejects_changed_delivery_on_existing_poll() {
   pass "migration revalidates delivery fields on an existing poll before leaving monitoring armed"
 }
 
+test_migration_rejects_changed_provider_head_on_existing_poll() {
+  local dir state rc
+  dir=$(make_case migration-provider-head-drift)
+  state="$dir/home/state"
+  write_task_meta "$dir"
+  FM_TEST_GH_HEAD=1111111111111111111111111111111111111111 \
+    run_check_entry "$dir" task-a https://github.com/o/r/pull/93 \
+    || fail "could not seed the provider-head drift poll"
+  rm -f "$state/.pr-check-migration-v1" "$state/.pr-check-migration-scan-v1"
+
+  set +e
+  FM_TEST_GH_HEAD=2222222222222222222222222222222222222222 \
+    FM_HOME="$dir/home" PATH="$dir/fakebin:$BASE_PATH" \
+    "$MIGRATE" > "$dir/migrate.out" 2> "$dir/migrate.err"
+  rc=$?
+  set -e
+
+  [ "$rc" -ne 0 ] || fail "migration accepted a poll bound to an obsolete provider head"
+  assert_poll_absent "$state" task-a
+  find "$state/.pr-check-quarantine" -name 'task-a.check.*' -type f | grep . >/dev/null \
+    || fail "migration did not quarantine the provider-head drift poll"
+  pass "migration rejects polls bound to obsolete provider heads"
+}
+
 test_migration_reuses_prepublication_delivery_validation() {
   local dir state count rc
   dir=$(make_case rule-migration-validation-reuse)
@@ -3864,6 +3888,7 @@ test_metadata_change_refuses_before_publication
 test_provider_change_refuses_before_publication
 test_migration_validates_each_canonical_task_before_rearm
 test_migration_rejects_changed_delivery_on_existing_poll
+test_migration_rejects_changed_provider_head_on_existing_poll
 test_migration_reuses_prepublication_delivery_validation
 test_migration_quarantines_poll_without_recorded_head
 test_rejected_metacharacter_bytes_are_inert

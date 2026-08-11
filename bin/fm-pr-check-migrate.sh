@@ -823,7 +823,7 @@ canonical_repair_from_pending() {
   quarantine_artifact "$registration" "$id" registration || return 1
   [ ! -e "$data" ] && [ ! -L "$data" ] || return 1
   [ ! -e "$registration" ] && [ ! -L "$registration" ] || return 1
-  fm_pr_task_delivery_fields_valid "$meta" "$provider" "$url" "$host" "$path" "$number" 0 \
+  fm_pr_task_delivery_fields_valid "$meta" "$provider" "$url" "$host" "$path" "$number" 1 \
     || return 1
   fm_pr_poll_prepare "$STATE" "$id" "$provider" "$url" "$host" "$path" "$number" "$TEMPLATE" || return 1
   fm_pr_poll_publish_prepared || return 1
@@ -1078,7 +1078,7 @@ if migration_needed; then
         if quarantine_artifact "$check" "$prefix" check \
           && quarantine_artifact "$data" "$prefix" data \
           && quarantine_artifact "$registration" "$prefix" registration \
-          && fm_pr_task_delivery_fields_valid "$meta" "$provider" "$url" "$host" "$path" "$number" 0 \
+          && fm_pr_task_delivery_fields_valid "$meta" "$provider" "$url" "$host" "$path" "$number" 1 \
           && fm_pr_poll_prepare "$STATE" "$id" "$provider" "$url" "$host" "$path" "$number" "$TEMPLATE" \
           && fm_pr_poll_publish_prepared \
           && complete_canonical_outcome "$id"; then

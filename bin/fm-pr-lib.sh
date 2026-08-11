@@ -282,6 +282,7 @@ fm_pr_task_delivery_fields_valid() {
   local meta=$1 provider=$2 url=$3 host=$4 path=$5 number=$6 required=${7:-0}
   local provider_required=$required
   fm_pr_task_delivery_metadata_valid "$meta" "$provider" "$host" || return 1
+  [ "$required" != 1 ] || fm_pr_metadata_identity_parse "$meta" 1 || return 1
   [ "$FM_PR_DELIVERY_RULE" = 1 ] && provider_required=1
   fm_pr_provider_fields_load "$provider" "$url" "$host" "$path" "$number" \
     "$FM_PR_DELIVERY_WORKTREE" "$provider_required" || {
@@ -289,7 +290,8 @@ fm_pr_task_delivery_fields_valid() {
       FM_PR_DELIVERY_ERROR='provider-fields'
       return 1
     }
-  fm_pr_task_delivery_provider_fields_valid
+  fm_pr_task_delivery_provider_fields_valid || return 1
+  [ "$required" != 1 ] || [ "$FM_PR_PROVIDER_HEAD" = "$FM_PR_META_HEAD" ]
 }
 
 # GitLab serves self-hosted instances, so the host is part of the identity
@@ -813,10 +815,9 @@ fm_pr_poll_delivery_fields_valid() {
   fm_pr_poll_artifacts_valid "$state" "$id" "$template" || return 1
   data="$state/$id.pr-poll"
   fm_pr_poll_data_parse "$data" || return 1
-  fm_pr_metadata_identity_parse "$state/$id.meta" 1 || return 1
   fm_pr_task_delivery_fields_valid "$state/$id.meta" \
     "$FM_PR_DATA_PROVIDER" "$FM_PR_DATA_URL" "$FM_PR_DATA_HOST" \
-    "$FM_PR_DATA_PATH" "$FM_PR_DATA_NUMBER" 0
+    "$FM_PR_DATA_PATH" "$FM_PR_DATA_NUMBER" 1
 }
 
 fm_pr_poll_snapshot_capture() {
