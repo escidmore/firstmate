@@ -1168,6 +1168,33 @@ test_migration_preserves_poll_on_provider_read_failure() {
   pass "migration preserves active polls while the provider is unavailable"
 }
 
+test_migration_quarantines_invalid_poll_during_provider_outage() {
+  local dir state rc
+  dir=$(make_case migration-invalid-poll-provider-outage)
+  state="$dir/home/state"
+  write_poll_meta "$state" task-a https://github.com/o/r/pull/95
+  printf '%s\n' 'legacy task bytes' > "$state/task-a.check.sh"
+  printf '%s\n' 'malformed sidecar' > "$state/task-a.pr-poll"
+  chmod 0600 "$state/task-a.check.sh" "$state/task-a.pr-poll"
+
+  set +e
+  FM_HOME="$dir/home" PATH="$BASE_PATH" "$MIGRATE" \
+    > "$dir/migrate.out" 2> "$dir/migrate.err"
+  rc=$?
+  set -e
+
+  [ "$rc" -ne 0 ] || fail "migration reported success with an unavailable provider"
+  [ ! -e "$state/task-a.check.sh" ] \
+    && [ ! -e "$state/task-a.pr-poll" ] \
+    && [ ! -e "$state/task-a.pr-poll-registration" ] \
+    || fail "provider outage left an invalid poll runnable"
+  find "$state/.pr-check-quarantine" -name 'task-a.check.*' -type f | grep . >/dev/null \
+    || fail "provider outage did not quarantine the invalid check"
+  find "$state/.pr-check-quarantine" -name 'task-a.data.*' -type f | grep . >/dev/null \
+    || fail "provider outage did not quarantine the invalid sidecar"
+  pass "provider outages quarantine structurally invalid polls without provider data"
+}
+
 test_migration_quarantines_poll_without_recorded_head() {
   local dir state rc
   dir=$(make_case migration-missing-recorded-head)
@@ -3959,6 +3986,7 @@ test_migration_rejects_changed_delivery_on_existing_poll
 test_migration_rejects_changed_provider_head_on_existing_poll
 test_migration_reuses_prepublication_delivery_validation
 test_migration_preserves_poll_on_provider_read_failure
+test_migration_quarantines_invalid_poll_during_provider_outage
 test_migration_quarantines_poll_without_recorded_head
 test_rejected_metacharacter_bytes_are_inert
 test_static_poll_contract
