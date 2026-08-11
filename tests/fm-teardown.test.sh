@@ -297,7 +297,7 @@ add_gitlab_mr_merged_for_head() {
 #!/usr/bin/env bash
 case " $* " in
   *"--output json"*)
-    printf '{"sha":"%s"}\n' "${FM_TEST_GLAB_HEAD:?}"
+    printf '{"sha":"%s","title":"fixture merge request","description":"fixture body"}\n' "${FM_TEST_GLAB_HEAD:?}"
     exit 0
     ;;
 esac

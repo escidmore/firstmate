@@ -1980,7 +1980,7 @@ test_ambiguous_failure_accepts_validated_replacement() {
   fm_pr_poll_artifacts_valid "$state" task-a "$POLL" \
     || fail "replacement registration did not publish a valid poll pair"
 
-  FM_HOME="$dir/home" PATH="$BASE_PATH" "$MIGRATE" > "$dir/migrate-retry.out" 2> "$dir/migrate-retry.err" \
+  FM_HOME="$dir/home" PATH="$dir/fakebin:$BASE_PATH" "$MIGRATE" > "$dir/migrate-retry.out" 2> "$dir/migrate-retry.err" \
     || fail "migration did not accept the validated replacement: $(cat "$dir/migrate-retry.err")"
   assert_valid_migration_marker "$state/.pr-check-migration-v1"
   [ ! -e "$pending" ] && [ ! -e "$failure" ] \
@@ -2281,7 +2281,7 @@ test_failed_outcomes_block_every_retry_until_repaired() {
     [ ! -e "$success" ] || fail "$classification unrepaired retry created a contradictory success obligation"
 
     rmdir "$state/task-a.pr-poll"
-    FM_HOME="$dir/home" PATH="$BASE_PATH" "$MIGRATE" > "$dir/migrate-3.out" 2> "$dir/migrate-3.err" \
+    FM_HOME="$dir/home" PATH="$dir/fakebin:$BASE_PATH" "$MIGRATE" > "$dir/migrate-3.out" 2> "$dir/migrate-3.err" \
       || fail "$classification migration did not recover after sidecar repair"
     assert_valid_migration_marker "$state/.pr-check-migration-v1"
     [ ! -e "$pending" ] && [ ! -L "$pending" ] \
@@ -2337,7 +2337,8 @@ test_canonical_publication_failure_recovers_only_on_retry() {
   [ -f "$failure" ] || fail "canonical publication fault did not persist a failure obligation"
   [ ! -e "$success" ] || fail "canonical publication fault persisted contradictory outcomes"
 
-  FM_HOME="$dir/home" PATH="$BASE_PATH" "$MIGRATE" > "$dir/migrate-2.out" 2> "$dir/migrate-2.err" \
+  rm -f "$dir/fakebin/mv" "$dir/fakebin/stat"
+  FM_HOME="$dir/home" PATH="$dir/fakebin:$BASE_PATH" "$MIGRATE" > "$dir/migrate-2.out" 2> "$dir/migrate-2.err" \
     || fail "canonical publication failure did not recover on a clean retry"
   [ "$(cat "$dir/migrate-2.out")" = 'PR_CHECK_MIGRATION: canonical polls rebuilt and armed; resume supervision for this home' ] \
     || fail "canonical publication retry did not report the armed outcome"
@@ -2505,7 +2506,7 @@ SH
     'pr=https://github.com/o/r/pull/41' \
     'pr_head=0123456789abcdef0123456789abcdef01234567'
   printf 'legacy delimiter bytes\n' > "$state/foo.diagnostic.bar.check.sh"
-  FM_HOME="$dir/home" "$MIGRATE" > "$dir/migrate.out" 2> "$dir/migrate.err" \
+  FM_HOME="$dir/home" PATH="$dir/fakebin:$BASE_PATH" "$MIGRATE" > "$dir/migrate.out" 2> "$dir/migrate.err" \
     || fail "migration could not decode an obligation for a delimiter-bearing task ID"
   fm_pr_poll_artifacts_valid "$state" foo.diagnostic.bar "$POLL" \
     || fail "delimiter-bearing task ID did not rebuild an authenticated poll"
@@ -2533,7 +2534,7 @@ test_nonexecuting_migration() {
   chmod 0700 "$state/x-watch.check.sh"
   x_before=$(state_snapshot "$state" | grep 'x-watch.check.sh')
 
-  FM_HOME="$dir/home" "$MIGRATE" > "$dir/migrate.out" 2> "$dir/migrate.err" \
+  FM_HOME="$dir/home" PATH="$dir/fakebin:$BASE_PATH" "$MIGRATE" > "$dir/migrate.out" 2> "$dir/migrate.err" \
     || fail "canonical legacy migration failed"
   [ "$(cat "$dir/migrate.out")" = 'PR_CHECK_MIGRATION: canonical polls rebuilt and armed; resume supervision for this home' ] \
     || fail "canonical migration stdout did not state that the rebuilt poll is armed"
@@ -2553,7 +2554,7 @@ test_nonexecuting_migration() {
   [ "$x_after" = "$x_before" ] || fail "migration changed the X-mode shim"
 
   snap_before=$(state_snapshot "$state")
-  FM_HOME="$dir/home" "$MIGRATE" > "$dir/migrate-2.out" 2> "$dir/migrate-2.err" \
+  FM_HOME="$dir/home" PATH="$dir/fakebin:$BASE_PATH" "$MIGRATE" > "$dir/migrate-2.out" 2> "$dir/migrate-2.err" \
     || fail "idempotent migration rerun failed"
   snap_after=$(state_snapshot "$state")
   [ "$snap_after" = "$snap_before" ] || fail "migration rerun changed state"
@@ -2562,7 +2563,8 @@ test_nonexecuting_migration() {
   FM_HOME="$dir/home" "$REGISTER" custom >/dev/null \
     || fail "could not register the later custom check"
   snap_before=$(state_snapshot "$state")
-  FM_HOME="$dir/home" "$MIGRATE" >/dev/null 2>/dev/null || fail "completed migration rerun failed"
+  FM_HOME="$dir/home" PATH="$dir/fakebin:$BASE_PATH" "$MIGRATE" >/dev/null 2>/dev/null \
+    || fail "completed migration rerun failed"
   snap_after=$(state_snapshot "$state")
   [ "$snap_after" = "$snap_before" ] || fail "completed migration changed a later custom check"
 
@@ -2579,7 +2581,7 @@ test_nonexecuting_migration() {
     'x_reply_max_chars=1900'
   printf 'legacy X-linked bytes\n' > "$state/task-x.check.sh"
   snap_before=$(cat "$state/task-x.meta")
-  FM_HOME="$dir/home" "$MIGRATE" > "$dir/migrate.out" 2> "$dir/migrate.err" \
+  FM_HOME="$dir/home" PATH="$dir/fakebin:$BASE_PATH" "$MIGRATE" > "$dir/migrate.out" 2> "$dir/migrate.err" \
     || fail "X-linked migration failed"
   [ "$(cat "$dir/migrate.out")" = 'PR_CHECK_MIGRATION: canonical polls rebuilt and armed; resume supervision for this home' ] \
     || fail "X-linked migration did not report an armed canonical poll"
@@ -2792,7 +2794,8 @@ test_direct_registration_refreshes_v1_x_shim() {
     [ -z "$quarantined" ] || fail "$marker_kind authenticated v1 X shim was quarantined"
 
     snapshot_before=$(state_snapshot "$state")
-    FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$dir/root" "$MIGRATE" --checks-safe >/dev/null \
+    FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$dir/root" PATH="$dir/fakebin:$BASE_PATH" \
+      "$MIGRATE" --checks-safe >/dev/null \
       || fail "$marker_kind current X shim marker rerun failed"
     snapshot_after=$(state_snapshot "$state")
     [ "$snapshot_after" = "$snapshot_before" ] \
