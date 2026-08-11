@@ -785,6 +785,43 @@ test_spawn_relaunch_without_a_harness_reuses_the_recorded_one() {
   pass "fm-spawn --relaunch: with no explicit harness it reuses the task's recorded one, never the crew default"
 }
 
+test_spawn_relaunch_requires_equal_delivery_rules_in_the_brief() {
+  local dir out rc meta brief
+  dir=$(new_case relaunch-rules-missing rl35)
+  add_ship_task "$dir" rl35 claude
+  meta="$dir/home/state/rl35.meta"
+  brief="$dir/home/data/rl35/brief.md"
+  printf '%s\n' \
+    'issue_key=TASK-91' \
+    'delivery_title_rule={issue_key}:' \
+    'delivery_link_rule=https://tracker.example/issue/{issue_key}' >> "$meta"
+  printf '%s\n' 'Delivery issue: TASK-91' >> "$brief"
+  printf 'zsh' > "$dir/fake/command"
+  out=$(run_spawn "$dir" rl35 --relaunch); rc=$?
+  expect_code 1 "$rc" "relaunch without its durable delivery fields in the brief should refuse"
+  assert_contains "$out" "durable delivery rules require matching issue, title, and link fields" \
+    "the refusal should name the missing brief contract"
+
+  dir=$(new_case relaunch-rules-equal rl36)
+  add_ship_task "$dir" rl36 claude
+  meta="$dir/home/state/rl36.meta"
+  brief="$dir/home/data/rl36/brief.md"
+  printf '%s\n' \
+    'issue_key=TASK-91' \
+    'delivery_title_rule={issue_key}:' \
+    'delivery_link_rule=https://tracker.example/issue/{issue_key}' >> "$meta"
+  printf '%s\n' \
+    'Delivery issue: TASK-91' \
+    'Delivery title rule: {issue_key}:' \
+    'Delivery link rule: https://tracker.example/issue/{issue_key}' >> "$brief"
+  printf 'zsh' > "$dir/fake/command"
+  out=$(run_spawn "$dir" rl36 --relaunch); rc=$?
+  expect_code 0 "$rc" "relaunch with equal durable delivery fields should succeed"
+  assert_contains "$out" "spawned rl36 harness=claude" \
+    "the successful relaunch should report the replacement task"
+  pass "fm-spawn --relaunch requires durable delivery rules to survive in the brief"
+}
+
 # fm-spawn arms per-task wiring on harness PREFIXES, because a task launched
 # from a raw command records that command's basename rather than the exact
 # adapter name. Retirement must resolve the same way, or a task recorded as
@@ -1321,6 +1358,7 @@ test_secondmate_relaunch_onto_a_crewmate_only_adapter_refuses_before_stop
 test_explicit_secondmate_harness_ignores_configured_profile_axes
 test_ship_relaunch_ignores_the_crew_harness_config
 test_spawn_relaunch_without_a_harness_reuses_the_recorded_one
+test_spawn_relaunch_requires_equal_delivery_rules_in_the_brief
 test_prefixed_prior_harness_wiring_is_still_retired
 test_muse_session_binding_is_retired_on_a_harness_switch
 test_missing_worktree_refuses_before_stopping_anything

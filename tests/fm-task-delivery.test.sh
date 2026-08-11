@@ -40,12 +40,13 @@ make_home() {  # <name> [<registry-line>...]
   printf '%s\n' "$home|$projects/proj|$fakebin"
 }
 
-write_brief() {  # <home> <id> [<recorded-mode>]
-  local home=$1 id=$2 mode=${3:-}
+write_brief() {  # <home> <id> [<recorded-mode>] [<issue-key>]
+  local home=$1 id=$2 mode=${3:-} issue_key=${4:-}
   mkdir -p "$home/data/$id"
   {
     printf 'You are a crewmate.\n\n# Definition of done\n'
     [ -z "$mode" ] || printf 'Delivery contract: mode=%s\n' "$mode"
+    [ -z "$issue_key" ] || printf 'Delivery issue: %s\n' "$issue_key"
   } > "$home/data/$id/brief.md"
 }
 
@@ -146,6 +147,28 @@ EOF
   pass "fm-spawn: the brief's recorded mode and the spawn's explicit mode must agree"
 }
 
+test_spawn_refuses_an_issue_key_mismatch() {
+  local rec home proj fakebin out status
+  rec=$(make_home issue-agreement)
+  IFS='|' read -r home proj fakebin <<EOF
+$rec
+EOF
+  write_brief "$home" delivery-issue-b4 no-mistakes TASK-41
+  out=$(run_spawn "$home" "$fakebin" delivery-issue-b4 "$proj" claude --mode no-mistakes --yolo off --issue-key TASK-42)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a brief/spawn issue-key mismatch should exit non-zero"
+  assert_contains "$out" "delivery issue mismatch for delivery-issue-b4" \
+    "issue-key mismatch refusal did not name the task"
+  assert_absent "$home/state/delivery-issue-b4.meta" \
+    "issue-key mismatch wrote task metadata"
+
+  write_brief "$home" delivery-issue-b5 no-mistakes external/42
+  out=$(run_spawn "$home" "$fakebin" delivery-issue-b5 "$proj" claude --mode no-mistakes --yolo off --issue-key external/42)
+  assert_not_contains "$out" "uppercase issue key" \
+    "spawn rejected an opaque tracker-neutral issue key"
+  pass "fm-spawn: the brief and spawn must carry the same opaque issue key"
+}
+
 # The registry is the captain's standing posture, so dropping below its rigor is
 # allowed but never silent, while matching or exceeding it stays quiet. An
 # unregistered project resolves to the same no-mistakes standing default
@@ -207,7 +230,7 @@ test_promote_requires_and_records_the_delivery_contract() {
   meta="$home/state/promote-d1.meta"
 
   write_scout_meta() {
-    printf 'window=fm-promote-d1\nkind=scout\nworktree=/tmp/wt\n' > "$meta"
+    printf 'window=fm-promote-d1\nkind=scout\nworktree=/tmp/wt\nproject=/tmp/fixture-project\n' > "$meta"
   }
 
   write_scout_meta
@@ -227,15 +250,98 @@ test_promote_requires_and_records_the_delivery_contract() {
   [ "$status" -ne 0 ] || fail "promotion on a conditional policy should exit non-zero"
   assert_contains "$out" "classify this task's surface" "promote did not refuse the conditional policy as a task mode"
 
-  out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" promote-d1 --mode direct-PR --yolo on 2>&1)
+  write_brief "$home" promote-d1
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" promote-d1 --mode no-mistakes --yolo on --issue-key TASK-2 2>&1)
   status=$?
-  expect_code 0 "$status" "a promotion carrying both flags should succeed"
+  expect_code 0 "$status" "promotion should accept a generic issue key"
+  assert_grep 'issue_key=TASK-2' "$meta" "promotion did not record the generic issue key"
+  grep -qx 'Delivery issue: TASK-2' "$home/data/promote-d1/brief.md" \
+    || fail "promotion did not record the issue key in the scout brief"
+
+  rm -f "$home/data/promote-d1/brief.md"
+  write_scout_meta
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" promote-d1 --mode no-mistakes --yolo on 2>&1)
+  status=$?
+  expect_code 0 "$status" "issue-less promotion should be allowed"
+  assert_grep 'kind=ship' "$meta" "issue-less promotion did not restore ship teardown protection"
+  assert_grep 'mode=no-mistakes' "$meta" "issue-less promotion did not record the delivery mode"
+  assert_grep 'yolo=on' "$meta" "issue-less promotion did not record the approval posture"
+  ! grep -q '^issue_key=' "$meta" \
+    || fail "issue-less promotion invented an issue key"
+  assert_not_contains "$out" "expected issue" \
+    "issue-less promotion emitted provider guidance without an issue key"
+
+  write_scout_meta
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" promote-d1 --mode no-mistakes --yolo on \
+    --delivery-title-rule '{issue_key}:' \
+    --delivery-link-rule 'https://tracker.example/issue/{issue_key}' 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "promotion without an issue key should reject delivery rules"
+  assert_contains "$out" "delivery rules require an issue key" \
+    "promotion did not reject delivery rules without an issue key"
+  assert_grep 'kind=scout' "$meta" "rejected unbound promotion changed the task record"
+
+  write_scout_meta
+  write_brief "$home" promote-d1
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" promote-d1 --mode no-mistakes --yolo on \
+    --issue-key external/42 --delivery-title-rule '{issue_key}:' \
+    --delivery-link-rule 'https://tracker.example/issue/{issue_key}' 2>&1)
+  status=$?
+  expect_code 0 "$status" "a promotion carrying its delivery contract and issue key should succeed"
   assert_grep 'kind=ship' "$meta" "promotion did not restore ship teardown protection"
-  assert_grep 'mode=direct-PR' "$meta" "promotion did not record the decided delivery mode"
+  assert_grep 'mode=no-mistakes' "$meta" "promotion did not record the decided delivery mode"
   assert_grep 'yolo=on' "$meta" "promotion did not record the decided approval posture"
-  assert_contains "$out" "ship instructions for mode=direct-PR" "promotion hint did not carry the decided mode"
+  assert_grep 'issue_key=external/42' "$meta" "promotion did not record the intake issue key"
+  grep -qx 'Delivery issue: external/42' "$home/data/promote-d1/brief.md" \
+    || fail "promotion did not record the issue key in the promoted brief"
+  grep -qx 'Delivery title rule: {issue_key}:' "$home/data/promote-d1/brief.md" \
+    || fail "promotion did not record the title rule in the promoted brief"
+  grep -qx 'Delivery link rule: https://tracker.example/issue/{issue_key}' "$home/data/promote-d1/brief.md" \
+    || fail "promotion did not record the link rule in the promoted brief"
+  assert_grep 'delivery_title_rule={issue_key}:' "$meta" "promotion did not record the title rule"
+  assert_grep 'delivery_link_rule=https://tracker.example/issue/{issue_key}' "$meta" "promotion did not record the link rule"
+  assert_contains "$out" "ship instructions for mode=no-mistakes" "promotion hint did not carry the decided mode"
+  assert_contains "$out" "invoke and drive no-mistakes immediately" \
+    "promotion hint did not require the immediate no-mistakes flow"
+  assert_contains "$out" "never a commit-only done event" \
+    "promotion hint still allowed commit-only completion"
+  assert_contains "$out" "expected issue external/42" \
+    "promotion hint omitted the expected issue"
+  assert_contains "$out" "PR title must begin with external/42:" \
+    "promotion hint omitted the issue-prefixed title requirement"
+  assert_contains "$out" "https://tracker.example/issue/external/42" \
+    "promotion hint omitted the matching link requirement"
   [ "$(grep -c '^mode=' "$meta")" = 1 ] || fail "promotion left more than one mode= line in the task record"
-  pass "fm-promote: promotion requires the delivery contract and records it exactly once"
+  pass "fm-promote: optional issue guidance is propagated and recorded exactly once"
+}
+
+test_promotion_handoff_shell_quotes_opaque_issue_key() {
+  local dir home meta out next capture
+  dir="$TMP_ROOT/promotion-handoff-quote"
+  home="$dir/home"
+  meta="$home/state/promote-quoted.meta"
+  mkdir -p "$home/state" "$home/data/promote-quoted" "$dir/bin"
+  printf 'window=fm-promote-quoted\nkind=scout\nworktree=/tmp/wt\nproject=/tmp/fixture-project\n' > "$meta"
+  printf 'You are a crewmate.\n' > "$home/data/promote-quoted/brief.md"
+  cat > "$dir/bin/fm-send.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$#" > "$FM_CAPTURE"
+printf '%s\n' "$2" >> "$FM_CAPTURE"
+SH
+  chmod +x "$dir/bin/fm-send.sh"
+
+  out=$(cd "$dir" && FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
+    "$PROMOTE" promote-quoted --mode direct-PR --yolo on --issue-key "O'Reilly/42" 2>&1)
+  next=$(printf '%s\n' "$out" | sed -n 's/^next: //p')
+  [ -n "$next" ] || fail "promotion did not emit a handoff command"
+  capture="$dir/capture"
+  (cd "$dir" && FM_CAPTURE="$capture" bash -c "$next") \
+    || fail "shell-quoted promotion handoff could not execute"
+  [ "$(sed -n '1p' "$capture")" = 2 ] \
+    || fail "promotion handoff split the opaque instruction into multiple arguments"
+  grep -qxF "<ship instructions for mode=direct-PR; expected issue O'Reilly/42: review scratch state with git status and git log; reset to a clean default-branch base; carry over only intended fix changes; create branch fm/promote-quoted; implement; commit, open the PR, and report its URL>" \
+    "$capture" || fail "promotion handoff changed the opaque issue key"
+  pass "fm-promote shell-quotes opaque issue-bearing handoffs"
 }
 
 # The registry parser survives for the mechanical consumers only. It accepts the
@@ -275,8 +381,10 @@ EOF
 test_ship_spawn_requires_a_valid_delivery_contract
 test_scout_and_secondmate_refuse_delivery_flags
 test_spawn_refuses_a_brief_mode_mismatch
+test_spawn_refuses_an_issue_key_mismatch
 test_spawn_notices_a_rigor_downgrade_against_the_registry
 test_scout_records_no_delivery_posture
 test_promote_requires_and_records_the_delivery_contract
+test_promotion_handoff_shell_quotes_opaque_issue_key
 test_project_mode_maps_the_conditional_policy
 echo "# all fm-task-delivery tests passed"

@@ -76,7 +76,23 @@ SH
   cat > "$fakebin/gh" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_TEST_GH_LOG"
+tsv_field() {
+  local value=$1
+  value=${value//\\/\\\\}
+  value=${value//$'\t'/\\t}
+  value=${value//$'\n'/\\n}
+  value=${value//$'\r'/\\r}
+  printf '%s' "$value"
+}
 case " $* " in
+  *"headRefOid,title,body"*)
+    [ "${FM_TEST_GH_VIEW_FAIL:-0}" = 0 ] || exit 1
+    head=$(tsv_field "${FM_TEST_GH_HEAD:-0123456789abcdef0123456789abcdef01234567}")
+    title=$(tsv_field "${FM_TEST_GH_TITLE:-fixture pull request}")
+    body=$(tsv_field "${FM_TEST_GH_BODY:-fixture body}")
+    printf '%s\t%s\t%s\n' \
+      "$head" "$title" "$body"
+    ;;
   *" headRefOid "*) printf '%s\n' "${FM_TEST_GH_HEAD:-0123456789abcdef0123456789abcdef01234567}" ;;
   *" state "*)
     [ "${FM_TEST_GH_FAIL:-0}" = 0 ] || exit 1
@@ -90,14 +106,22 @@ SH
 printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
 exit "${FM_TEST_GH_AXI_RC:-0}"
 SH
-  # Plain glab, reproducing the real CLI's contract: its field output on stdout
-  # and exit 0 on success, and a non-zero exit with no stdout on any failure.
+  # Plain glab, reproducing the real CLI's text and JSON output contracts.
   cat > "$fakebin/glab" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_TEST_GLAB_LOG"
 [ "${FM_TEST_GLAB_FAIL:-0}" = 0 ] || exit 1
 [ "${FM_TEST_GLAB_SLEEP:-0}" = 0 ] || sleep "$FM_TEST_GLAB_SLEEP"
-printf 'title:\tfixture merge request\nstate:\t%s\nauthor:\tsomeone\n' "${FM_TEST_GLAB_STATE:-opened}"
+case " $* " in
+  *"--output json"*)
+    printf '{"sha":"%s"}\n' "${FM_TEST_GLAB_HEAD:-0123456789abcdef0123456789abcdef01234567}"
+    exit 0
+    ;;
+esac
+printf 'title:\t%s\nstate:\t%s\nauthor:\tsomeone\n--\n%s\n' \
+  "${FM_TEST_GLAB_TITLE:-fixture merge request}" \
+  "${FM_TEST_GLAB_STATE:-opened}" \
+  "${FM_TEST_GLAB_BODY:-fixture body}"
 SH
   chmod +x "$fakebin/gh" "$fakebin/gh-axi" "$fakebin/glab"
   : > "$dir/gh.log"
@@ -108,21 +132,35 @@ SH
 }
 
 write_task_meta() {
-  local dir=$1 id=${2:-task-a}
+  local dir=$1 id=${2:-task-a} mode=${3:-no-mistakes}
   fm_write_meta "$dir/home/state/$id.meta" \
     "window=firstmate:fm-$id" \
     "endpoint_task_id=$id" \
     "worktree=$dir/wt" \
     "project=$dir/project" \
     "kind=ship" \
-    "mode=no-mistakes"
+    "mode=$mode"
 }
 
+write_delivery_task_meta() {
+  local dir=$1 issue_key=${2:-} title_rule=${3:-} link_rule=${4:-}
+  fm_write_meta "$dir/home/state/task-a.meta" \
+    'window=firstmate:fm-task-a' \
+    'endpoint_task_id=task-a' \
+    "worktree=$dir/wt" \
+    "project=$dir/project" \
+    'kind=ship' \
+    'mode=no-mistakes'
+  [ -z "$issue_key" ] || printf 'issue_key=%s\n' "$issue_key" >> "$dir/home/state/task-a.meta"
+  [ -z "$title_rule" ] || printf 'delivery_title_rule=%s\n' "$title_rule" >> "$dir/home/state/task-a.meta"
+  [ -z "$link_rule" ] || printf 'delivery_link_rule=%s\n' "$link_rule" >> "$dir/home/state/task-a.meta"
+}
 write_poll_meta() {
   local state=$1 id=$2 url=$3
   fm_write_meta "$state/$id.meta" \
     "window=fm-$id" \
-    "pr=$url"
+    "pr=$url" \
+    'pr_head=0123456789abcdef0123456789abcdef01234567'
 }
 
 write_ambiguous_poll() {
@@ -257,11 +295,10 @@ run_check_entry() {
 run_merge_entry() {
   local dir=$1
   shift
-  FM_ROOT_OVERRIDE="$dir/root" FM_HOME="$dir/home" \
+  BASH_ENV=/dev/null FM_ROOT_OVERRIDE="$dir/root" FM_HOME="$dir/home" \
     FM_TEST_GUARD_LOG="$dir/guard.log" FM_TEST_GH_LOG="$dir/gh.log" \
     FM_TEST_GH_AXI_LOG="$dir/gh-axi.log" FM_TEST_GLAB_LOG="$dir/glab.log" \
-    PATH="$dir/fakebin:$BASE_PATH" \
-    "$PR_MERGE" "$@"
+    PATH="$dir/fakebin:$BASE_PATH" "$PR_MERGE" "$@"
 }
 
 # shellcheck disable=SC2016 # Literal rejected URL bytes are parser test data.
@@ -576,14 +613,38 @@ test_valid_recording_and_merge_derivation() {
 
   dir=$(make_case newline-head)
   write_task_meta "$dir"
+  set +e
   FM_TEST_GH_HEAD=$'0123456789abcdef0123456789abcdef01234567\nwindow=unexpected' \
     run_check_entry "$dir" task-a https://github.com/o/r/pull/2 >/dev/null 2>/dev/null \
-    || fail "valid check with malformed remote head failed"
+    ; rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "registration accepted a multiline provider head"
   assert_no_grep 'pr_head=' "$dir/home/state/task-a.meta" "multiline PR head reached metadata"
   assert_no_grep 'window=unexpected' "$dir/home/state/task-a.meta" "newline metadata key was injected"
 
+  for provider in github gitlab; do
+    dir=$(make_case "invalid-head-$provider")
+    write_task_meta "$dir"
+    set +e
+    case "$provider" in
+      github)
+        FM_TEST_GH_HEAD=not-a-commit \
+          run_check_entry "$dir" task-a https://github.com/o/r/pull/2 >/dev/null 2>/dev/null
+        ;;
+      gitlab)
+        FM_TEST_GLAB_HEAD=not-a-commit \
+          run_check_entry "$dir" task-a https://gitlab.com/o/r/-/merge_requests/2 >/dev/null 2>/dev/null
+        ;;
+    esac
+    rc=$?
+    set -e
+    [ "$rc" -ne 0 ] || fail "$provider registration accepted an invalid provider head"
+    assert_no_grep '^pr=' "$dir/home/state/task-a.meta" "$provider invalid head reached metadata"
+    assert_poll_absent "$dir/home/state" task-a
+  done
+
   dir=$(make_case lifecycle-compatible-id)
-  write_task_meta "$dir" Task_A.1
+  write_task_meta "$dir" Task_A.1 direct-PR
   run_merge_entry "$dir" Task_A.1 https://github.com/o/r/pull/3 \
     > "$dir/stdout" 2> "$dir/stderr" \
     || fail "safe lifecycle-compatible task ID could not use the PR merge flow"
@@ -653,6 +714,391 @@ SH
   pass "valid direct and merge flows record exact metadata and reject multiline head metadata"
 }
 
+test_declared_delivery_rule_precedes_registration_and_merge() {
+  local dir state url rc provider valid_title valid_body malicious_title historical_poll before
+  valid_title='TASK-91:guard delivery'
+  valid_body='Tracks https://tracker.example/issue/TASK-91/guard-delivery'
+
+  for provider in github gitlab; do
+    dir=$(make_case "rule-valid-$provider")
+    write_delivery_task_meta "$dir" TASK-91 '{issue_key}:' 'https://tracker.example/issue/{issue_key}'
+    case "$provider" in
+      github)
+        url=https://github.com/o/r/pull/91
+        FM_TEST_GH_TITLE="$valid_title" FM_TEST_GH_BODY="$valid_body" \
+          run_check_entry "$dir" task-a "$url" \
+          || fail "$provider registration rejected matching declared delivery fields"
+        ;;
+      gitlab)
+        url=https://gitlab.com/o/r/-/merge_requests/91
+        FM_TEST_GLAB_TITLE="$valid_title" FM_TEST_GLAB_BODY="$valid_body" \
+          run_check_entry "$dir" task-a "$url" \
+          || fail "$provider registration rejected matching declared delivery fields"
+        ;;
+    esac
+    grep -qxF "pr=$url" "$dir/home/state/task-a.meta" \
+      || fail "$provider policy validation did not reach canonical registration"
+    if [ "$provider" = gitlab ]; then
+      grep -qxF 'pr_head=0123456789abcdef0123456789abcdef01234567' \
+        "$dir/home/state/task-a.meta" \
+        || fail "$provider registration did not record the provider head"
+    fi
+    fm_pr_poll_artifacts_valid "$dir/home/state" task-a "$POLL" \
+      || fail "$provider policy validation did not publish a valid poll"
+  done
+
+  dir=$(make_case rule-opaque-key)
+  write_delivery_task_meta "$dir" external/42 '{issue_key}:' 'https://tracker.example/issue/{issue_key}'
+  FM_TEST_GH_TITLE='external/42:guard delivery' \
+    FM_TEST_GH_BODY='Tracks https://tracker.example/issue/external/42' \
+    run_check_entry "$dir" task-a https://github.com/o/r/pull/91 \
+    || fail "registration rejected a tracker-neutral opaque issue key"
+  grep -qxF 'pr=https://github.com/o/r/pull/91' "$dir/home/state/task-a.meta" \
+    || fail "opaque issue-key validation did not reach canonical registration"
+  fm_pr_poll_artifacts_valid "$dir/home/state" task-a "$POLL" \
+    || fail "opaque issue-key validation did not publish a valid poll"
+
+  dir=$(make_case rule-missing-key)
+  write_delivery_task_meta "$dir" '' '{issue_key}:' 'https://tracker.example/issue/{issue_key}'
+  set +e
+  FM_TEST_GH_TITLE="$valid_title" FM_TEST_GH_BODY="$valid_body" \
+    run_check_entry "$dir" task-a https://github.com/o/r/pull/91 > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "a declared rule without an issue key should block registration"
+  assert_contains "$(cat "$dir/stderr")" "invalid delivery rule" \
+    "missing issue metadata did not reject the unbound rule"
+  ! grep -q '^pr=' "$dir/home/state/task-a.meta" \
+    || fail "missing issue metadata reached PR registration"
+  assert_poll_absent "$dir/home/state" task-a
+
+  dir=$(make_case rule-missing-rule)
+  write_delivery_task_meta "$dir" TASK-91
+  FM_TEST_GH_TITLE='unconstrained title' FM_TEST_GH_BODY='unconstrained body' \
+    run_check_entry "$dir" task-a https://github.com/o/r/pull/91 \
+    || fail "an issue key without a declared rule should not block registration"
+  grep -q '^pr=' "$dir/home/state/task-a.meta" \
+    || fail "missing delivery rule blocked registration"
+
+  dir=$(make_case rule-title-mismatch)
+  write_delivery_task_meta "$dir" TASK-91 '{issue_key}:' 'https://tracker.example/issue/{issue_key}'
+  # Keep literal shell syntax as inert provider data.
+  # shellcheck disable=SC2016
+  malicious_title='TASK-92: bad $(touch provider-field-was-executed)'
+  set +e
+  FM_TEST_GH_TITLE="$malicious_title" FM_TEST_GH_BODY="$valid_body" \
+    run_merge_entry "$dir" task-a https://github.com/o/r/pull/91 -- --merge \
+      > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "guarded merge accepted a mismatched issue title"
+  assert_contains "$(cat "$dir/stderr")" "PR title does not match the declared delivery rule" \
+    "title mismatch diagnostic was unclear"
+  assert_not_contains "$(cat "$dir/stderr")" 'touch provider-field-was-executed' \
+    "title mismatch leaked provider field bytes into the diagnostic"
+  [ ! -e "$dir/wt/provider-field-was-executed" ] \
+    || fail "provider title bytes executed as shell syntax"
+  [ ! -s "$dir/gh-axi.log" ] || fail "title mismatch reached the GitHub merge command"
+  ! grep -q '^pr=' "$dir/home/state/task-a.meta" \
+    || fail "title mismatch reached PR registration"
+  assert_poll_absent "$dir/home/state" task-a
+
+  dir=$(make_case rule-link-missing)
+  write_delivery_task_meta "$dir" TASK-91 '{issue_key}:' 'https://tracker.example/issue/{issue_key}'
+  set +e
+  FM_TEST_GH_TITLE="$valid_title" FM_TEST_GH_BODY='Wrong issue https://tracker.example/issue/TASK-91x' \
+    run_check_entry "$dir" task-a https://github.com/o/r/pull/91 > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "registration accepted a missing declared link"
+  ! grep -q '^pr=' "$dir/home/state/task-a.meta" \
+    || fail "missing declared link reached PR registration"
+  assert_poll_absent "$dir/home/state" task-a
+
+  dir=$(make_case rule-backslash)
+  write_delivery_task_meta "$dir" 'TASK\91' '{issue_key}:' 'https://tracker.example/issue/{issue_key}'
+  FM_TEST_GH_TITLE='TASK\91:guard delivery' \
+    FM_TEST_GH_BODY='Tracks https://tracker.example/issue/TASK\91/guard-delivery' \
+    run_check_entry "$dir" task-a https://github.com/o/r/pull/91 \
+    || fail "registration decoded a backslash in the declared issue key"
+  grep -q '^pr=' "$dir/home/state/task-a.meta" \
+    || fail "backslash-preserving delivery validation did not reach registration"
+
+  dir=$(make_case rule-escaped-provider-fields)
+  write_delivery_task_meta "$dir" 'TASK\91' $'{issue_key}:\tguard' 'https://tracker.example/issue/{issue_key}\path'
+  FM_TEST_GH_TITLE=$'TASK\\91:\tguard' \
+    FM_TEST_GH_BODY=$'Intro line\nTracks https://tracker.example/issue/TASK\\91\\path' \
+    run_check_entry "$dir" task-a https://github.com/o/r/pull/91 \
+    || fail "registration did not decode GitHub @tsv provider fields"
+  grep -q '^pr=' "$dir/home/state/task-a.meta" \
+    || fail "decoded GitHub @tsv provider fields did not reach registration"
+
+  dir=$(make_case rule-provider-read-failure)
+  write_delivery_task_meta "$dir" TASK-91 '{issue_key}:' 'https://tracker.example/issue/{issue_key}'
+  set +e
+  FM_TEST_GH_VIEW_FAIL=1 run_check_entry "$dir" task-a https://github.com/o/r/pull/91 \
+    > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "registration accepted an unreadable provider response"
+  assert_contains "$(cat "$dir/stderr")" "could not read PR title and body" \
+    "provider read failure was not explicit"
+  ! grep -q '^pr=' "$dir/home/state/task-a.meta" \
+    || fail "provider read failure reached PR registration"
+  assert_poll_absent "$dir/home/state" task-a
+
+  dir=$(make_case rule-migration-validation-order)
+  state="$dir/home/state"
+  historical_poll="$dir/historical-fm-pr-poll.sh"
+  cp "$POLL" "$historical_poll"
+  printf '\n' >> "$historical_poll"
+  chmod 0600 "$historical_poll"
+  write_delivery_task_meta "$dir" TASK-91 '{issue_key}:' 'https://tracker.example/issue/{issue_key}'
+  printf '%s\n' 'pr=https://github.com/o/r/pull/91' \
+    'pr_head=0123456789abcdef0123456789abcdef01234567' >> "$state/task-a.meta"
+  seed_canonical_poll "$dir" task-a https://github.com/o/r/pull/91 "$historical_poll"
+  rm -f "$state/.pr-check-migration-v1" "$state/.pr-check-migration-scan-v1"
+  before=$(state_snapshot "$state")
+  set +e
+  FM_TEST_GH_TITLE='TASK-92:guard delivery' FM_TEST_GH_BODY="$valid_body" \
+    run_check_entry "$dir" task-a https://github.com/o/r/pull/91 \
+    > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "provider validation accepted a mismatched title with a legacy poll"
+  [ "$(state_snapshot "$state")" = "$before" ] \
+    || fail "provider rejection rebuilt or armed a legacy poll"
+  [ "$(grep -c '^pr=' "$state/task-a.meta")" -eq 1 ] \
+    || fail "provider rejection recorded new PR metadata"
+  pass "declared delivery fields fail closed before registration and guarded merge"
+}
+test_metadata_change_refuses_before_publication() {
+  local dir state rc
+  dir=$(make_case metadata-change)
+  state="$dir/home/state"
+  write_delivery_task_meta "$dir" TASK-91 '{issue_key}:' 'https://tracker.example/issue/{issue_key}'
+  cat > "$dir/fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_TEST_GH_LOG"
+case " $* " in
+  *" headRefOid,title,body "*)
+    printf '%s\t%s\t%s\n' \
+      0123456789abcdef0123456789abcdef01234567 \
+      'TASK-91:guard delivery' \
+      'Tracks https://tracker.example/issue/TASK-91/guard-delivery'
+    printf 'issue_key=TASK-92\n' >> "$FM_TEST_RACE_META"
+    ;;
+esac
+SH
+  chmod +x "$dir/fakebin/gh"
+  set +e
+  FM_TEST_RACE_META="$state/task-a.meta" run_check_entry "$dir" task-a \
+    https://github.com/o/r/pull/91 > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "metadata change during provider validation was accepted"
+  assert_contains "$(cat "$dir/stderr")" "task metadata changed during PR validation" \
+    "metadata race refusal was not explicit"
+  ! grep -q '^pr=' "$state/task-a.meta" || fail "metadata race reached PR registration"
+  assert_poll_absent "$state" task-a
+  pass "metadata changes during provider validation fail closed before publication"
+}
+test_provider_change_refuses_before_publication() {
+  local dir state rc
+  dir=$(make_case provider-change)
+  state="$dir/home/state"
+  write_delivery_task_meta "$dir" TASK-91 '{issue_key}:' 'https://tracker.example/issue/{issue_key}'
+  cat > "$dir/fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+case " $* " in
+  *" headRefOid,title,body "*)
+    count=0
+    [ -f "${FM_TEST_GH_COUNT:-}" ] && count=$(cat "$FM_TEST_GH_COUNT")
+    count=$((count + 1))
+    printf '%s\n' "$count" > "$FM_TEST_GH_COUNT"
+    if [ "$count" -eq 1 ]; then
+      printf '%s\t%s\t%s\n' \
+        0123456789abcdef0123456789abcdef01234567 \
+        'TASK-91:guard delivery' \
+        'Tracks https://tracker.example/issue/TASK-91/guard-delivery'
+    else
+      printf '%s\t%s\t%s\n' \
+        0123456789abcdef0123456789abcdef01234567 \
+        'TASK-92:changed delivery' \
+        'Tracks https://tracker.example/issue/TASK-91/guard-delivery'
+    fi
+    ;;
+esac
+SH
+  chmod +x "$dir/fakebin/gh"
+  set +e
+  FM_TEST_GH_COUNT="$dir/gh-count" run_check_entry "$dir" task-a \
+    https://github.com/o/r/pull/91 > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "a provider edit during migration was accepted"
+  [ "$(cat "$dir/gh-count")" -eq 2 ] || fail "provider fields were not reloaded before publication"
+  assert_contains "$(cat "$dir/stderr")" "PR title does not match the declared delivery rule" \
+    "the changed provider title was not rejected"
+  ! grep -q '^pr=' "$state/task-a.meta" \
+    || fail "a changed provider title reached PR registration"
+  assert_poll_absent "$state" task-a
+  pass "provider changes during PR validation fail closed before publication"
+}
+test_migration_validates_each_canonical_task_before_rearm() {
+  local dir state rc
+  dir=$(make_case rule-migration-other-task)
+  state="$dir/home/state"
+  write_delivery_task_meta "$dir" TASK-91 '{issue_key}:' 'https://tracker.example/issue/{issue_key}'
+  fm_write_meta "$state/task-b.meta" \
+    'window=firstmate:fm-task-b' \
+    'endpoint_task_id=task-b' \
+    "worktree=$dir/wt" \
+    "project=$dir/project" \
+    'kind=ship' \
+    'mode=no-mistakes' \
+    'issue_key=TASK-91' \
+    'delivery_title_rule={issue_key}:' \
+    'delivery_link_rule=https://tracker.example/issue/{issue_key}' \
+    'pr=https://github.com/o/r/pull/92' \
+    'pr_head=0123456789abcdef0123456789abcdef01234567'
+  printf '%s\n' 'legacy task-b bytes' > "$state/task-b.check.sh"
+  cat > "$dir/fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+case " $* " in
+  *"/pull/91"*)
+    printf '%s\t%s\t%s\n' \
+      0123456789abcdef0123456789abcdef01234567 \
+      'TASK-91:guard delivery' \
+      'Tracks https://tracker.example/issue/TASK-91/guard-delivery'
+    exit 0
+    ;;
+  *"/pull/92"*)
+    printf '%s\t%s\t%s\n' \
+      0123456789abcdef0123456789abcdef01234567 \
+      'TASK-92:wrong delivery' \
+      'Tracks https://tracker.example/issue/TASK-91/guard-delivery'
+    exit 0
+    ;;
+esac
+exit 1
+SH
+  chmod +x "$dir/fakebin/gh"
+
+  set +e
+  run_check_entry "$dir" task-a https://github.com/o/r/pull/91 > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+
+  [ "$rc" -eq 0 ] || fail "current task registration did not survive another task's rejected legacy poll"
+  fm_pr_poll_artifacts_valid "$state" task-a "$POLL" \
+    || fail "current task did not publish after migration quarantined another task"
+  [ ! -e "$state/task-b.check.sh" ] && [ ! -e "$state/task-b.pr-poll" ] \
+    || fail "migration rearmed an unvalidated task poll"
+  find "$state/.pr-check-quarantine" -name 'task-b.check.*' -type f | grep . >/dev/null \
+    || fail "migration did not quarantine the unvalidated task check"
+  pass "migration validates every canonical task before rearming its poll"
+}
+
+test_migration_rejects_changed_delivery_on_existing_poll() {
+  local dir state rc
+  dir=$(make_case rule-migration-existing-poll)
+  state="$dir/home/state"
+  write_delivery_task_meta "$dir" TASK-91 '{issue_key}:' 'https://tracker.example/issue/{issue_key}'
+  FM_TEST_GH_TITLE='TASK-91:guard delivery' \
+    FM_TEST_GH_BODY='Tracks https://tracker.example/issue/TASK-91/guard-delivery' \
+    run_check_entry "$dir" task-a https://github.com/o/r/pull/91 \
+    || fail "could not seed the existing canonical poll"
+  sed 's/^delivery_title_rule=.*/delivery_title_rule={issue_key}:changed/' \
+    "$state/task-a.meta" > "$state/task-a.meta.tmp"
+  mv "$state/task-a.meta.tmp" "$state/task-a.meta"
+  rm -f "$state/.pr-check-migration-v1" "$state/.pr-check-migration-scan-v1"
+
+  set +e
+  FM_TEST_GH_TITLE='TASK-91:guard delivery' \
+    FM_TEST_GH_BODY='Tracks https://tracker.example/issue/TASK-91/guard-delivery' \
+    FM_HOME="$dir/home" PATH="$dir/fakebin:$BASE_PATH" \
+    "$MIGRATE" > "$dir/migrate.out" 2> "$dir/migrate.err"
+  rc=$?
+  set -e
+
+  [ "$rc" -ne 0 ] || fail "migration accepted a structurally valid poll with changed delivery rules"
+  assert_poll_absent "$state" task-a
+  find "$state/.pr-check-quarantine" -name 'task-a.check.*' -type f | grep . >/dev/null \
+    || fail "migration did not quarantine the rejected existing poll"
+  pass "migration revalidates delivery fields on an existing poll before leaving monitoring armed"
+}
+
+test_migration_reuses_prepublication_delivery_validation() {
+  local dir state count rc
+  dir=$(make_case rule-migration-validation-reuse)
+  state="$dir/home/state"
+  write_delivery_task_meta "$dir" TASK-91 '{issue_key}:' 'https://tracker.example/issue/{issue_key}'
+  printf '%s\n' 'legacy task-a bytes' > "$state/task-a.check.sh"
+  printf '%s\n' 'pr=https://github.com/o/r/pull/91' \
+    'pr_head=0123456789abcdef0123456789abcdef01234567' >> "$state/task-a.meta"
+  cat > "$dir/fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+case " $* " in
+  *" headRefOid,title,body "*)
+    count=0
+    [ -f "$FM_TEST_GH_COUNT" ] && count=$(cat "$FM_TEST_GH_COUNT")
+    count=$((count + 1))
+    printf '%s\n' "$count" > "$FM_TEST_GH_COUNT"
+    if [ "$count" -eq 1 ]; then
+      printf '%s\t%s\t%s\n' \
+        0123456789abcdef0123456789abcdef01234567 \
+        'TASK-91:guard delivery' \
+        'Tracks https://tracker.example/issue/TASK-91/guard-delivery'
+    else
+      printf '%s\t%s\t%s\n' \
+        0123456789abcdef0123456789abcdef01234567 \
+        'TASK-92:wrong delivery' \
+        'Tracks https://tracker.example/issue/TASK-91/guard-delivery'
+    fi
+    exit 0
+    ;;
+esac
+exit 1
+SH
+  chmod +x "$dir/fakebin/gh"
+
+  set +e
+  FM_TEST_GH_COUNT="$dir/gh-count" FM_HOME="$dir/home" PATH="$dir/fakebin:$BASE_PATH" \
+    "$MIGRATE" > "$dir/migrate.out" 2> "$dir/migrate.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || fail "migration rejected a poll after its prepublication validation passed"
+  count=$(cat "$dir/gh-count")
+  [ "$count" -eq 1 ] || fail "migration re-read provider fields after publishing the poll"
+  fm_pr_poll_artifacts_valid "$state" task-a "$POLL" \
+    || fail "migration did not leave the validated poll armed"
+  pass "migration reuses validated provider fields after poll publication"
+}
+
+test_migration_quarantines_poll_without_recorded_head() {
+  local dir state rc
+  dir=$(make_case migration-missing-recorded-head)
+  state="$dir/home/state"
+  fm_write_meta "$state/task-a.meta" \
+    'window=fm-task-a' \
+    'pr=https://github.com/o/r/pull/93'
+  printf '%s\n' 'legacy task bytes' > "$state/task-a.check.sh"
+
+  set +e
+  FM_HOME="$dir/home" PATH="$dir/fakebin:$BASE_PATH" "$MIGRATE" \
+    > "$dir/migrate.out" 2> "$dir/migrate.err"
+  rc=$?
+  set -e
+
+  [ "$rc" -eq 0 ] || fail "migration rejected a quarantined poll without a recorded head"
+  [ ! -e "$state/task-a.check.sh" ] && [ ! -e "$state/task-a.pr-poll" ] \
+    && [ ! -e "$state/task-a.pr-poll-registration" ] \
+    || fail "migration left a poll armed without a recorded head"
+  find "$state/.pr-check-quarantine" -name 'task-a.check.*' -type f | grep . >/dev/null \
+    || fail "migration did not quarantine a poll without a recorded head"
+  pass "migration quarantines recorded PR polls without a bound head"
+}
 run_watcher_bounded() {
   local home=$1 fakebin=$2 check_interval=${FM_TEST_CHECK_INTERVAL:-0} watch_root=${FM_TEST_WATCH_ROOT:-$ROOT}
   shift 2
@@ -857,7 +1303,8 @@ test_migration_excludes_older_watcher_before_scan() {
   sentinel="$dir/legacy-ran"
   fm_write_meta "$state/task-a.meta" \
     'window=fm-task-a' \
-    'pr=https://github.com/o/r/pull/9'
+    'pr=https://github.com/o/r/pull/9' \
+    'pr_head=0123456789abcdef0123456789abcdef01234567'
   cat > "$state/task-a.check.sh" <<SH
 #!/usr/bin/env bash
 printf 'seen\n' > '$sentinel'
@@ -1727,7 +2174,8 @@ test_failed_outcomes_block_every_retry_until_repaired() {
     if [ "$classification" = canonical ]; then
       fm_write_meta "$state/task-a.meta" \
         'window=fm-task-a' \
-        'pr=https://github.com/o/r/pull/12'
+        'pr=https://github.com/o/r/pull/12' \
+        'pr_head=0123456789abcdef0123456789abcdef01234567'
       printf 'legacy canonical bytes\n' > "$state/task-a.check.sh"
       pending="$state/.pr-check-quarantine/task-a.diagnostic.pending-canonical"
       success="$state/.pr-check-quarantine/task-a.diagnostic.canonical"
@@ -1798,7 +2246,8 @@ test_canonical_publication_failure_recovers_only_on_retry() {
   state="$dir/home/state"
   fm_write_meta "$state/task-a.meta" \
     'window=fm-task-a' \
-    'pr=https://github.com/o/r/pull/13'
+    'pr=https://github.com/o/r/pull/13' \
+    'pr_head=0123456789abcdef0123456789abcdef01234567'
   printf 'legacy canonical bytes\n' > "$state/task-a.check.sh"
   destination="$state/task-a.check.sh"
   link_target="$dir/external-sentinel"
@@ -1990,7 +2439,8 @@ SH
   state="$dir/home/state"
   fm_write_meta "$state/foo.diagnostic.bar.meta" \
     'window=fm-foo.diagnostic.bar' \
-    'pr=https://github.com/o/r/pull/41'
+    'pr=https://github.com/o/r/pull/41' \
+    'pr_head=0123456789abcdef0123456789abcdef01234567'
   printf 'legacy delimiter bytes\n' > "$state/foo.diagnostic.bar.check.sh"
   FM_HOME="$dir/home" "$MIGRATE" > "$dir/migrate.out" 2> "$dir/migrate.err" \
     || fail "migration could not decode an obligation for a delimiter-bearing task ID"
@@ -2012,7 +2462,8 @@ test_nonexecuting_migration() {
   fm_write_meta "$state/task-a.meta" \
     'window=fm-task-a' \
     'worktree=/private/unused' \
-    'pr=https://github.com/o/r/pull/9'
+    'pr=https://github.com/o/r/pull/9' \
+    'pr_head=0123456789abcdef0123456789abcdef01234567'
   printf 'printf legacy > %q\n' "$marker" > "$state/task-a.check.sh"
   chmod 0644 "$state/task-a.check.sh"
   fmx_poll_shim_content "$dir/home" "$ROOT" > "$state/x-watch.check.sh"
@@ -2312,7 +2763,8 @@ test_bootstrap_migrates_before_other_mutations() {
   state="$dir/home/state"
   fm_write_meta "$state/task-a.meta" \
     'window=fm-task-a' \
-    'pr=https://github.com/o/r/pull/11'
+    'pr=https://github.com/o/r/pull/11' \
+    'pr_head=0123456789abcdef0123456789abcdef01234567'
   printf 'legacy bytes\n' > "$state/task-a.check.sh"
 
   FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" PATH="$dir/fakebin:$BASE_PATH" \
@@ -2332,7 +2784,8 @@ test_bootstrap_isolates_incomplete_poll_migration() {
   x_poll_marker="$dir/x-poll-ran"
   fm_write_meta "$state/task-a.meta" \
     'window=fm-task-a' \
-    'pr=https://github.com/o/r/pull/12'
+    'pr=https://github.com/o/r/pull/12' \
+    'pr_head=0123456789abcdef0123456789abcdef01234567'
   printf 'legacy bytes\n' > "$state/task-a.check.sh"
   mkdir "$state/task-a.pr-poll"
   write_poll_meta "$state" z-healthy https://github.com/o/r/pull/13
@@ -3367,6 +3820,13 @@ test_retirement_queue_failure_and_receipt_tampering
 test_gitlab_merged_poll_retires
 test_invalid_entrypoints_have_zero_side_effects
 test_valid_recording_and_merge_derivation
+test_declared_delivery_rule_precedes_registration_and_merge
+test_metadata_change_refuses_before_publication
+test_provider_change_refuses_before_publication
+test_migration_validates_each_canonical_task_before_rearm
+test_migration_rejects_changed_delivery_on_existing_poll
+test_migration_reuses_prepublication_delivery_validation
+test_migration_quarantines_poll_without_recorded_head
 test_rejected_metacharacter_bytes_are_inert
 test_static_poll_contract
 test_atomic_interruption_leaves_no_partial_artifact
