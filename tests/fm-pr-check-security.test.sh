@@ -114,9 +114,17 @@ printf '%s\n' "$*" >> "$FM_TEST_GLAB_LOG"
 [ "${FM_TEST_GLAB_SLEEP:-0}" = 0 ] || sleep "$FM_TEST_GLAB_SLEEP"
 case " $* " in
   *"--output json"*)
-    printf '{"sha":"%s","head_pipeline":{"sha":"%s"}}\n' \
-      "${FM_TEST_GLAB_HEAD:-0123456789abcdef0123456789abcdef01234567}" \
-      "${FM_TEST_GLAB_PIPELINE_HEAD:-fedcba9876543210fedcba9876543210fedcba98}"
+    node - <<'JS'
+const env = process.env;
+process.stdout.write(JSON.stringify({
+  sha: env.FM_TEST_GLAB_HEAD || "0123456789abcdef0123456789abcdef01234567",
+  title: env.FM_TEST_GLAB_JSON_TITLE || env.FM_TEST_GLAB_TITLE || "fixture merge request",
+  description: env.FM_TEST_GLAB_JSON_BODY || env.FM_TEST_GLAB_BODY || "fixture body",
+  head_pipeline: {
+    sha: env.FM_TEST_GLAB_PIPELINE_HEAD || "fedcba9876543210fedcba9876543210fedcba98"
+  }
+}) + "\n");
+JS
     exit 0
     ;;
 esac
@@ -736,9 +744,17 @@ test_declared_delivery_rule_precedes_registration_and_merge() {
         ;;
       gitlab)
         url=https://gitlab.com/o/r/-/merge_requests/91
-        FM_TEST_GLAB_TITLE="$valid_title" FM_TEST_GLAB_BODY="$valid_body" \
+        cat > "$dir/fakebin/jq" <<'SH'
+#!/usr/bin/env bash
+printf 'invoked\n' > "${FM_TEST_JQ_LOG:?}"
+exit 1
+SH
+        chmod +x "$dir/fakebin/jq"
+        FM_TEST_JQ_LOG="$dir/jq.log" \
+          FM_TEST_GLAB_TITLE="$valid_title" FM_TEST_GLAB_BODY="$valid_body" \
           run_check_entry "$dir" task-a "$url" \
           || fail "$provider registration rejected matching declared delivery fields"
+        [ ! -e "$dir/jq.log" ] || fail "$provider registration invoked jq"
         ;;
     esac
     grep -qxF "pr=$url" "$dir/home/state/task-a.meta" \
@@ -948,7 +964,25 @@ SH
   ! grep -q '^pr=' "$state/task-a.meta" \
     || fail "a changed provider title reached PR registration"
   assert_poll_absent "$state" task-a
-  pass "provider changes during PR validation fail closed before publication"
+
+  dir=$(make_case gitlab-torn-provider-read)
+  state="$dir/home/state"
+  write_delivery_task_meta "$dir" TASK-91 '{issue_key}:' 'https://tracker.example/issue/{issue_key}'
+  set +e
+  FM_TEST_GLAB_TITLE='TASK-91:guard delivery' \
+    FM_TEST_GLAB_BODY='Tracks https://tracker.example/issue/TASK-91/guard-delivery' \
+    FM_TEST_GLAB_JSON_TITLE='TASK-92:changed delivery' \
+    run_check_entry "$dir" task-a https://gitlab.com/o/r/-/merge_requests/91 \
+    > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "a torn GitLab provider read was accepted"
+  assert_contains "$(cat "$dir/stderr")" "PR title does not match the declared delivery rule" \
+    "the current GitLab title was not rejected"
+  ! grep -q '^pr=' "$state/task-a.meta" \
+    || fail "a torn GitLab provider read reached PR registration"
+  assert_poll_absent "$state" task-a
+  pass "provider changes and torn GitLab reads fail closed before publication"
 }
 test_migration_validates_each_canonical_task_before_rearm() {
   local dir state rc

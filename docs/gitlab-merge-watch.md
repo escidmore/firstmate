@@ -35,7 +35,7 @@ Two things about plain `glab` were established by running it, because assuming e
 
 First, plain `glab` has no field selector.
 `gh` reads one field with `--json state -q .state`; `glab mr view` offers only `-F, --output string  Format output as: text, json`.
-Firstmate reads the text output for title and body validation, and reads the JSON output's `sha` field for the registered source head.
+Firstmate reads the JSON output's top-level `sha`, `title`, and `description` fields from one provider observation.
 The head is accepted only when it is an exact commit hash, so a changed output format produces no registration rather than an unbound delivery record.
 
 Second, `glab` cannot take a merge request URL the way `gh pr view` can.

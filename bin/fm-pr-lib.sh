@@ -202,14 +202,25 @@ fm_pr_provider_fields_load() {
       fi
       ;;
     gitlab)
-      raw_view=$(glab mr view "$number" -R "https://$host/$path" 2>/dev/null) || raw_view=
-      title=$(printf '%s\n' "$raw_view" | sed -n 's/^title:[[:space:]]*//p' | head -1)
-      body=$(printf '%s\n' "$raw_view" | sed -n '/^--$/,$p' | sed '1d')
       json_view=$(glab mr view "$number" -R "https://$host/$path" --output json 2>/dev/null) || json_view=
-      FM_PR_PROVIDER_HEAD=$(printf '%s\n' "$json_view" | jq -er '.sha | strings' 2>/dev/null) \
-        || FM_PR_PROVIDER_HEAD=
-      FM_PR_PROVIDER_TITLE=$title
-      FM_PR_PROVIDER_BODY=$body
+      if {
+        IFS= read -r -d '' remote_head
+        IFS= read -r -d '' title
+        IFS= read -r -d '' body
+      } < <(
+        printf '%s\n' "$json_view" | node -e '
+const value = JSON.parse(require("fs").readFileSync(0, "utf8"));
+const fields = [value.sha, value.title, value.description];
+if (fields.some(field => typeof field !== "string" || field.includes("\0"))) {
+  process.exit(1);
+}
+process.stdout.write(fields.join("\0") + "\0");
+' 2>/dev/null
+      ); then
+        FM_PR_PROVIDER_HEAD=$remote_head
+        FM_PR_PROVIDER_TITLE=$title
+        FM_PR_PROVIDER_BODY=$body
+      fi
       ;;
     *) return 1 ;;
   esac
