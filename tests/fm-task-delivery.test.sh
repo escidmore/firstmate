@@ -171,6 +171,42 @@ EOF
   pass "fm-spawn: the brief and spawn must carry the same opaque issue key"
 }
 
+test_spawn_uses_delivery_fields_from_generated_definition() {
+  local rec home proj fakebin out status
+  rec=$(make_home canonical-fields)
+  IFS='|' read -r home proj fakebin <<EOF
+$rec
+EOF
+  mkdir -p "$home/data/delivery-canonical-b7"
+  cat > "$home/data/delivery-canonical-b7/brief.md" <<'EOF'
+You are a crewmate.
+
+# Task
+The task text mentions a different delivery contract.
+Delivery contract: mode=direct-PR
+Delivery issue: WRONG-7
+Delivery title rule: wrong title
+Delivery link rule: https://wrong.example/{issue_key}
+
+# Definition of done
+Delivery contract: mode=no-mistakes
+Delivery issue: TASK-7
+Delivery title rule: {issue_key}:
+Delivery link rule: https://tracker.example/issue/{issue_key}
+EOF
+  out=$(run_spawn "$home" "$fakebin" delivery-canonical-b7 "$proj" claude \
+    --mode no-mistakes --yolo off --issue-key TASK-7)
+  status=$?
+  [ "$status" -ne 0 ] || fail "spawn unexpectedly reached a successful backend"
+  assert_not_contains "$out" "delivery mismatch" \
+    "task text delivery labels shadowed the generated mode"
+  assert_not_contains "$out" "delivery issue mismatch" \
+    "task text delivery labels shadowed the generated issue"
+  assert_not_contains "$out" "delivery rule mismatch" \
+    "task text delivery labels shadowed the generated rules"
+  pass "fm-spawn: task text cannot shadow generated delivery fields"
+}
+
 test_spawn_refuses_unbound_delivery_rules() {
   local rec home proj fakebin out status
   rec=$(make_home unbound-rules)
@@ -402,6 +438,7 @@ test_ship_spawn_requires_a_valid_delivery_contract
 test_scout_and_secondmate_refuse_delivery_flags
 test_spawn_refuses_a_brief_mode_mismatch
 test_spawn_refuses_an_issue_key_mismatch
+test_spawn_uses_delivery_fields_from_generated_definition
 test_spawn_refuses_unbound_delivery_rules
 test_spawn_notices_a_rigor_downgrade_against_the_registry
 test_scout_records_no_delivery_posture

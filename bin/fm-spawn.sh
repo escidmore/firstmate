@@ -1644,10 +1644,15 @@ delivery_rigor_rank() {  # <mode> -> 3 (most rigor) .. 1 (least); 0 = not a task
 # delivery differ, which is the exact drift this contract prevents.
 if [ "$KIND" = ship ]; then
   PROJ_NAME=$(basename "$PROJ_ABS")
-  BRIEF_MODE=$(sed -n 's/^Delivery contract: mode=\([^ ]*\).*$/\1/p' "$BRIEF" | head -n 1)
-  BRIEF_ISSUE_KEY=$(sed -n 's/^Delivery issue: \([^ ]*\).*$/\1/p' "$BRIEF" | head -n 1)
-  BRIEF_TITLE_RULE=$(sed -n 's/^Delivery title rule: //p' "$BRIEF" | head -n 1)
-  BRIEF_LINK_RULE=$(sed -n 's/^Delivery link rule: //p' "$BRIEF" | head -n 1)
+  BRIEF_DOD=$(awk '
+    /^# Definition of done$/ { body=""; in_dod=1; next }
+    in_dod { body = body $0 ORS }
+    END { printf "%s", body }
+  ' "$BRIEF")
+  BRIEF_MODE=$(printf '%s\n' "$BRIEF_DOD" | sed -n 's/^Delivery contract: mode=\([^ ]*\).*$/\1/p' | head -n 1)
+  BRIEF_ISSUE_KEY=$(printf '%s\n' "$BRIEF_DOD" | sed -n 's/^Delivery issue: \([^ ]*\).*$/\1/p' | head -n 1)
+  BRIEF_TITLE_RULE=$(printf '%s\n' "$BRIEF_DOD" | sed -n 's/^Delivery title rule: //p' | head -n 1)
+  BRIEF_LINK_RULE=$(printf '%s\n' "$BRIEF_DOD" | sed -n 's/^Delivery link rule: //p' | head -n 1)
   if [ -z "$BRIEF_MODE" ]; then
     echo "warning: $BRIEF records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode $MODE - confirm its definition of done matches" >&2
   elif [ "$BRIEF_MODE" != "$MODE" ]; then
