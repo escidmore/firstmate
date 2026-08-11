@@ -120,6 +120,7 @@ process.stdout.write(JSON.stringify({
   sha: env.FM_TEST_GLAB_HEAD || "0123456789abcdef0123456789abcdef01234567",
   title: env.FM_TEST_GLAB_JSON_TITLE || env.FM_TEST_GLAB_TITLE || "fixture merge request",
   description: env.FM_TEST_GLAB_JSON_BODY || env.FM_TEST_GLAB_BODY || "fixture body",
+  state: env.FM_TEST_GLAB_STATE || "opened",
   head_pipeline: {
     sha: env.FM_TEST_GLAB_PIPELINE_HEAD || "fedcba9876543210fedcba9876543210fedcba98"
   }
@@ -3875,6 +3876,41 @@ test_gitlab_merged_poll_retires() {
   pass "GitHub and GitLab exact merged results share one retirement path"
 }
 
+test_gitlab_null_description_normalizes_to_empty_body() {
+  local dir mode rc url
+  dir=$(make_case gitlab-null-description)
+  url=https://gitlab.example/group/project/-/merge_requests/7
+  cat > "$dir/fakebin/glab" <<'SH'
+#!/usr/bin/env bash
+if [ "${FM_TEST_GLAB_DESCRIPTION_MODE:-null}" = missing ]; then
+  printf '%s\n' '{"sha":"0123456789abcdef0123456789abcdef01234567","title":"fixture merge request"}'
+else
+  printf '%s\n' '{"sha":"0123456789abcdef0123456789abcdef01234567","title":"fixture merge request","description":null}'
+fi
+SH
+  chmod +x "$dir/fakebin/glab"
+  for mode in null missing; do
+    FM_TEST_GLAB_DESCRIPTION_MODE=$mode PATH="$dir/fakebin:$PATH" \
+      fm_pr_provider_fields_load gitlab "$url" gitlab.example group/project 7 "" 1 \
+      || fail "GitLab $mode description rejected a valid merge request"
+    [ "$FM_PR_PROVIDER_HEAD" = 0123456789abcdef0123456789abcdef01234567 ] \
+      || fail "GitLab $mode description lost the source head"
+    [ -z "$FM_PR_PROVIDER_BODY" ] || fail "GitLab $mode description was not normalized to empty"
+  done
+
+  write_delivery_task_meta "$dir" TASK-7 '{issue_key}:' 'https://tracker.example/issue/{issue_key}'
+  set +e
+  FM_TEST_GLAB_DESCRIPTION_MODE=null PATH="$dir/fakebin:$PATH" \
+    fm_pr_task_delivery_fields_valid "$dir/home/state/task-a.meta" gitlab "$url" \
+    gitlab.example group/project 7 0
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "empty GitLab description bypassed delivery-link validation"
+  [ "$FM_PR_DELIVERY_ERROR" = provider-fields ] \
+    || fail "empty GitLab description returned the wrong delivery validation error"
+  pass "GitLab null and missing descriptions become optional empty bodies"
+}
+
 test_parser_matrix
 test_gitlab_merge_watch
 test_merged_poll_retires_once
@@ -3884,6 +3920,7 @@ test_external_merge_transition_retires_only_terminal_poll
 test_retirement_refuses_replacement_and_nonterminal_results
 test_retirement_queue_failure_and_receipt_tampering
 test_gitlab_merged_poll_retires
+test_gitlab_null_description_normalizes_to_empty_body
 test_invalid_entrypoints_have_zero_side_effects
 test_valid_recording_and_merge_derivation
 test_declared_delivery_rule_precedes_registration_and_merge

@@ -297,13 +297,14 @@ add_gitlab_mr_merged_for_head() {
 #!/usr/bin/env bash
 case " $* " in
   *"--output json"*)
-    printf '{"sha":"%s","title":"fixture merge request","description":"fixture body"}\n' "${FM_TEST_GLAB_HEAD:?}"
+    printf '{"sha":"%s","state":"%s","title":"fixture merge request","description":"fixture body"}\n' \
+      "${FM_TEST_GLAB_HEAD:?}" "${FM_TEST_GLAB_STATE:-merged}"
     exit 0
     ;;
 esac
 case "${1:-} ${2:-}" in
   "mr view")
-    printf '%s\n' 'title: fixture merge request' "state: ${FM_TEST_GLAB_STATE:-merged}" 'author: someone' '--' 'fixture body'
+    printf '%s\n' 'title: fixture merge request' 'state: opened' 'author: someone' '--' 'fixture body'
     exit 0
     ;;
 esac

@@ -1423,6 +1423,42 @@ test_missing_run_head_falls_back_to_current_state() {
   pass "missing run head falls back instead of matching by branch"
 }
 
+test_relative_no_mistakes_path_survives_worktree_change() {
+  reset_fakes
+  local d run_status out
+  d=$(new_case relative-no-mistakes)
+  make_repo_on_branch "$d/wt" fm/feat-relative
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/relative.meta" "window=fm:fm-relative" \
+    "worktree=$d/wt" "kind=ship" "mode=no-mistakes"
+  run_status=$(run_running fm/feat-relative)
+  out=$(cd "$d" && PATH=./fakebin:$PATH FM_STATE_OVERRIDE="$d/state" \
+    FM_FAKE_AXI_STATUS="$run_status" "$CREW_STATE" relative)
+  assert_contains "$out" "state: working" "relative no-mistakes path reports the run"
+  assert_contains "$out" "source: run-step" "relative no-mistakes path survives cd"
+  pass "relative no-mistakes executables remain usable after entering the worktree"
+}
+
+test_non_guarded_modes_ignore_no_mistakes_run() {
+  reset_fakes
+  local mode d out
+  for mode in direct-PR local-only; do
+    d=$(new_case "mode-${mode//[^[:alnum:]]/-}")
+    make_repo_on_branch "$d/wt" "fm/feat-${mode//[^[:alnum:]]/-}"
+    make_fakebin "$d" >/dev/null
+    fm_write_meta "$d/state/mode.meta" "window=fm:fm-mode" \
+      "worktree=$d/wt" "kind=ship" "mode=$mode" "harness=claude"
+    printf 'done: committed work\n' > "$d/state/mode.status"
+    arm_idle_record "$d/state" mode
+    FM_FAKE_AXI_STATUS=$(run_parked "fm/feat-${mode//[^[:alnum:]]/-}")
+    out=$(run_crew_state "$d" mode)
+    assert_contains "$out" "state: done" "$mode must use its status log"
+    assert_contains "$out" "source: status-log" "$mode must ignore no-mistakes runs"
+    assert_not_contains "$out" "source: run-step" "$mode must not attribute a no-mistakes run"
+  done
+  pass "direct-PR and local-only modes ignore no-mistakes run state"
+}
+
 test_active_run_is_authoritative
 test_stale_needs_decision_superseded
 test_stale_blocked_superseded
@@ -1477,5 +1513,7 @@ test_historical_same_branch_rewritten_head_not_current
 test_active_run_descendant_fix_head_remains_current
 test_local_advanced_past_run_head_invalidates
 test_missing_run_head_falls_back_to_current_state
+test_relative_no_mistakes_path_survives_worktree_change
+test_non_guarded_modes_ignore_no_mistakes_run
 
 echo "all fm-crew-state tests passed"

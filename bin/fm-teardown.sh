@@ -857,16 +857,14 @@ pr_is_merged() {
       esac
       ;;
     gitlab)
-      view=$(cd "$WT" && glab mr view "$FM_PR_NUMBER" -R "https://$FM_PR_HOST/$FM_PR_PATH" 2>/dev/null) || return 1
-      state=$(printf '%s\n' "$view" | sed -n 's/^state:[[:space:]]*//p' | head -1)
-      [ -n "$state" ] || return 1
+      fm_pr_provider_fields_load "$provider" "$target" "$FM_PR_HOST" "$FM_PR_PATH" \
+        "$FM_PR_NUMBER" "$WT" 1 || return 1
+      state=$FM_PR_PROVIDER_STATE
       case "$state" in
         MERGED|merged) ;;
         OPEN|open|CLOSED|closed) return 2 ;;
         *) return 1 ;;
       esac
-      fm_pr_provider_fields_load "$provider" "$target" "$FM_PR_HOST" "$FM_PR_PATH" \
-        "$FM_PR_NUMBER" "$WT" 1 || return 1
       head=$FM_PR_PROVIDER_HEAD
       ;;
     *) return 1 ;;

@@ -12,9 +12,14 @@
 # form preserves stdout, stderr, and exit status; the checked form discards
 # stderr, while fm_nm_run keeps the fail-open query contract for read-only callers.
 fm_nm_run_bounded() {  # <dir> <timeout_secs> <args...>
-  local dir=$1 timeout_secs=$2 have_timeout=none no_mistakes
+  local dir=$1 timeout_secs=$2 have_timeout=none no_mistakes no_mistakes_dir no_mistakes_file
   shift 2
   no_mistakes=$(command -v no-mistakes 2>/dev/null) || return 1
+  no_mistakes_dir=${no_mistakes%/*}
+  [ "$no_mistakes_dir" = "$no_mistakes" ] && no_mistakes_dir=.
+  no_mistakes_file=${no_mistakes##*/}
+  no_mistakes_dir=$(cd "$no_mistakes_dir" 2>/dev/null && pwd -P) || return 1
+  no_mistakes="$no_mistakes_dir/$no_mistakes_file"
   if command -v timeout >/dev/null 2>&1; then have_timeout=timeout
   elif command -v gtimeout >/dev/null 2>&1; then have_timeout=gtimeout
   elif command -v perl >/dev/null 2>&1; then have_timeout=perl

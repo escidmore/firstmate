@@ -27,6 +27,7 @@ FM_PR_NUMBER=
 FM_PR_PROVIDER_HEAD=
 FM_PR_PROVIDER_TITLE=
 FM_PR_PROVIDER_BODY=
+FM_PR_PROVIDER_STATE=
 FM_PR_DELIVERY_ISSUE_KEY=
 FM_PR_DELIVERY_TITLE_RULE=
 FM_PR_DELIVERY_LINK_RULE=
@@ -174,10 +175,11 @@ fm_pr_delivery_body_links_issue() {
 
 fm_pr_provider_fields_load() {
   local provider=$1 url=$2 host=$3 path=$4 number=$5 worktree=$6 required=${7:-1}
-  local raw_view remote_head title body json_view
+  local raw_view remote_head title body state json_view
   FM_PR_PROVIDER_HEAD=
   FM_PR_PROVIDER_TITLE=
   FM_PR_PROVIDER_BODY=
+  FM_PR_PROVIDER_STATE=
   [ "$required" = 1 ] || return 0
   case "$provider" in
     github)
@@ -207,10 +209,13 @@ fm_pr_provider_fields_load() {
         IFS= read -r -d '' remote_head
         IFS= read -r -d '' title
         IFS= read -r -d '' body
+        IFS= read -r -d '' state
       } < <(
         printf '%s\n' "$json_view" | node -e '
 const value = JSON.parse(require("fs").readFileSync(0, "utf8"));
-const fields = [value.sha, value.title, value.description];
+const body = value.description == null ? "" : value.description;
+const state = value.state == null ? "" : value.state;
+const fields = [value.sha, value.title, body, state];
 if (fields.some(field => typeof field !== "string" || field.includes("\0"))) {
   process.exit(1);
 }
@@ -220,6 +225,7 @@ process.stdout.write(fields.join("\0") + "\0");
         FM_PR_PROVIDER_HEAD=$remote_head
         FM_PR_PROVIDER_TITLE=$title
         FM_PR_PROVIDER_BODY=$body
+        FM_PR_PROVIDER_STATE=$state
       fi
       ;;
     *) return 1 ;;
