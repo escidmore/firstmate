@@ -206,9 +206,8 @@ fm_pr_provider_fields_load() {
       title=$(printf '%s\n' "$raw_view" | sed -n 's/^title:[[:space:]]*//p' | head -1)
       body=$(printf '%s\n' "$raw_view" | sed -n '/^--$/,$p' | sed '1d')
       json_view=$(glab mr view "$number" -R "https://$host/$path" --output json 2>/dev/null) || json_view=
-      FM_PR_PROVIDER_HEAD=$(printf '%s\n' "$json_view" \
-        | sed -n 's/.*"sha"[[:space:]]*:[[:space:]]*"\([0-9a-f][0-9a-f]*\)".*/\1/p' \
-        | head -1)
+      FM_PR_PROVIDER_HEAD=$(printf '%s\n' "$json_view" | jq -er '.sha | strings' 2>/dev/null) \
+        || FM_PR_PROVIDER_HEAD=
       FM_PR_PROVIDER_TITLE=$title
       FM_PR_PROVIDER_BODY=$body
       ;;

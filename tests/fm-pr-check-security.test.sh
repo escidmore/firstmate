@@ -114,7 +114,9 @@ printf '%s\n' "$*" >> "$FM_TEST_GLAB_LOG"
 [ "${FM_TEST_GLAB_SLEEP:-0}" = 0 ] || sleep "$FM_TEST_GLAB_SLEEP"
 case " $* " in
   *"--output json"*)
-    printf '{"sha":"%s"}\n' "${FM_TEST_GLAB_HEAD:-0123456789abcdef0123456789abcdef01234567}"
+    printf '{"sha":"%s","head_pipeline":{"sha":"%s"}}\n' \
+      "${FM_TEST_GLAB_HEAD:-0123456789abcdef0123456789abcdef01234567}" \
+      "${FM_TEST_GLAB_PIPELINE_HEAD:-fedcba9876543210fedcba9876543210fedcba98}"
     exit 0
     ;;
 esac
