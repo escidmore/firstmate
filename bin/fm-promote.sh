@@ -142,8 +142,16 @@ if [ -n "$ISSUE_KEY" ]; then
   [ -f "$BRIEF" ] || { echo "error: issue-backed promotion requires the scout brief at $BRIEF" >&2; exit 1; }
   BRIEF_TMP="$FM_HOME/data/$ID/.brief.promote.${BASHPID:-$$}"
   awk '
-    /^Delivery issue: / || /^Delivery title rule: / || /^Delivery link rule: / { next }
-    { print }
+    { lines[NR] = $0; if ($0 == "# Definition of done") last_dod = NR }
+    END {
+      for (i = 1; i <= NR; i++) {
+        if (last_dod > 0 && i > last_dod && \
+          (lines[i] ~ /^Delivery issue: / || lines[i] ~ /^Delivery title rule: / || lines[i] ~ /^Delivery link rule: /)) {
+          continue
+        }
+        print lines[i]
+      }
+    }
   ' "$BRIEF" > "$BRIEF_TMP"
   {
     printf 'Delivery issue: %s\n' "$ISSUE_KEY"

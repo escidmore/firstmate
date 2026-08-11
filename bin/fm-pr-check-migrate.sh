@@ -396,7 +396,11 @@ migration_needed() {
     fi
     id=$(basename "$check" .check.sh)
     fm_custom_check_registered "$STATE" "$id" && continue
+    FM_PR_PROVIDER_FIELDS_STATUS=not-checked
     if ! fm_pr_poll_delivery_fields_valid "$STATE" "$id" "$TEMPLATE"; then
+      if [ "$FM_PR_PROVIDER_FIELDS_STATUS" = unavailable ]; then
+        continue
+      fi
       return 0
     fi
   done
@@ -806,7 +810,7 @@ record_ambiguous_failure() {
 }
 
 canonical_repair_from_pending() {
-  local id=$1 meta data registration provider url host path number check
+  local id=$1 meta data registration provider url host path number check delivery_validated
   meta="$STATE/$id.meta"
   data="$STATE/$id.pr-poll"
   registration="$STATE/$id.pr-poll-registration"
@@ -819,12 +823,18 @@ canonical_repair_from_pending() {
   host=$MIGRATION_HOST
   path=$MIGRATION_PATH
   number=$MIGRATION_NUMBER
+  delivery_validated=0
+  FM_PR_PROVIDER_FIELDS_STATUS=not-checked
+  if fm_pr_task_delivery_fields_valid "$meta" "$provider" "$url" "$host" "$path" "$number" 1; then
+    delivery_validated=1
+  elif [ "$FM_PR_PROVIDER_FIELDS_STATUS" = unavailable ]; then
+    return 1
+  fi
   quarantine_artifact "$data" "$id" data || return 1
   quarantine_artifact "$registration" "$id" registration || return 1
   [ ! -e "$data" ] && [ ! -L "$data" ] || return 1
   [ ! -e "$registration" ] && [ ! -L "$registration" ] || return 1
-  fm_pr_task_delivery_fields_valid "$meta" "$provider" "$url" "$host" "$path" "$number" 1 \
-    || return 1
+  [ "$delivery_validated" -eq 1 ] || return 1
   fm_pr_poll_prepare "$STATE" "$id" "$provider" "$url" "$host" "$path" "$number" "$TEMPLATE" || return 1
   fm_pr_poll_publish_prepared || return 1
   canonical_poll_artifacts_valid "$id"
@@ -1068,6 +1078,14 @@ if migration_needed; then
         host=$MIGRATION_HOST
         path=$MIGRATION_PATH
         number=$MIGRATION_NUMBER
+        delivery_validated=0
+        FM_PR_PROVIDER_FIELDS_STATUS=not-checked
+        if fm_pr_task_delivery_fields_valid "$meta" "$provider" "$url" "$host" "$path" "$number" 1; then
+          delivery_validated=1
+        elif [ "$FM_PR_PROVIDER_FIELDS_STATUS" = unavailable ]; then
+          migration_failed=1
+          continue
+        fi
         message="task $id: migration outcome tracking started before legacy poll handling"
         if ! ensure_diagnostic_obligation "$prefix" pending-canonical "$message" \
           || ! process_diagnostic_obligations; then
@@ -1077,12 +1095,16 @@ if migration_needed; then
         fi
         if quarantine_artifact "$check" "$prefix" check \
           && quarantine_artifact "$data" "$prefix" data \
-          && quarantine_artifact "$registration" "$prefix" registration \
-          && fm_pr_task_delivery_fields_valid "$meta" "$provider" "$url" "$host" "$path" "$number" 1 \
-          && fm_pr_poll_prepare "$STATE" "$id" "$provider" "$url" "$host" "$path" "$number" "$TEMPLATE" \
-          && fm_pr_poll_publish_prepared \
-          && complete_canonical_outcome "$id"; then
-          :
+          && quarantine_artifact "$registration" "$prefix" registration; then
+          if [ "$delivery_validated" -eq 1 ] \
+            && fm_pr_poll_prepare "$STATE" "$id" "$provider" "$url" "$host" "$path" "$number" "$TEMPLATE" \
+            && fm_pr_poll_publish_prepared \
+            && complete_canonical_outcome "$id"; then
+            :
+          else
+            migration_failed=1
+            record_canonical_failure "$id" || diagnostics_failed=1
+          fi
         else
           migration_failed=1
           record_canonical_failure "$id" || diagnostics_failed=1

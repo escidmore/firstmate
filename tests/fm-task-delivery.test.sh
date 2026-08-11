@@ -400,6 +400,44 @@ SH
   pass "fm-promote shell-quotes opaque issue-bearing handoffs"
 }
 
+test_promotion_preserves_delivery_labeled_task_text() {
+  local dir home state meta brief out status
+  dir="$TMP_ROOT/promotion-preserves-task-text"
+  home="$dir/home"
+  state="$home/state"
+  meta="$state/preserve-task-text.meta"
+  brief="$home/data/preserve-task-text/brief.md"
+  mkdir -p "$state" "$(dirname "$brief")"
+  printf 'window=fm-preserve-task-text\nkind=scout\nworktree=/tmp/wt\nproject=/tmp/fixture-project\n' > "$meta"
+  cat > "$brief" <<'EOF'
+# Task
+The task text documents these literal protocol examples.
+Delivery issue: task-text-example
+Delivery title rule: task title example
+Delivery link rule: task link example
+
+# Definition of done
+Write the scout report and stop.
+EOF
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$state" "$PROMOTE" preserve-task-text \
+    --mode no-mistakes --yolo off --issue-key external/42 \
+    --delivery-title-rule '{issue_key}:' \
+    --delivery-link-rule 'https://tracker.example/issue/{issue_key}' 2>&1)
+  status=$?
+  expect_code 0 "$status" "promotion should preserve task text with delivery labels"
+  assert_contains "$out" "promoted preserve-task-text" \
+    "promotion did not report the successful task transition"
+  grep -qx 'Delivery issue: task-text-example' "$brief" \
+    || fail "promotion deleted a delivery-labeled task line"
+  grep -qx 'Delivery title rule: task title example' "$brief" \
+    || fail "promotion deleted a task title-rule example"
+  grep -qx 'Delivery link rule: task link example' "$brief" \
+    || fail "promotion deleted a task link-rule example"
+  grep -qx 'Delivery issue: external/42' "$brief" \
+    || fail "promotion omitted the canonical issue line"
+  pass "fm-promote preserves task prose while replacing delivery fields"
+}
+
 # The registry parser survives for the mechanical consumers only. It accepts the
 # conditional policy, maps it to its most rigorous leg for them, and exposes the
 # raw annotation for the one caller that must tell a policy from a flat mode.
@@ -444,5 +482,6 @@ test_spawn_notices_a_rigor_downgrade_against_the_registry
 test_scout_records_no_delivery_posture
 test_promote_requires_and_records_the_delivery_contract
 test_promotion_handoff_shell_quotes_opaque_issue_key
+test_promotion_preserves_delivery_labeled_task_text
 test_project_mode_maps_the_conditional_policy
 echo "# all fm-task-delivery tests passed"

@@ -28,6 +28,7 @@ FM_PR_PROVIDER_HEAD=
 FM_PR_PROVIDER_TITLE=
 FM_PR_PROVIDER_BODY=
 FM_PR_PROVIDER_STATE=
+FM_PR_PROVIDER_FIELDS_STATUS=
 FM_PR_DELIVERY_ISSUE_KEY=
 FM_PR_DELIVERY_TITLE_RULE=
 FM_PR_DELIVERY_LINK_RULE=
@@ -180,7 +181,11 @@ fm_pr_provider_fields_load() {
   FM_PR_PROVIDER_TITLE=
   FM_PR_PROVIDER_BODY=
   FM_PR_PROVIDER_STATE=
-  [ "$required" = 1 ] || return 0
+  FM_PR_PROVIDER_FIELDS_STATUS=unavailable
+  if [ "$required" != 1 ]; then
+    FM_PR_PROVIDER_FIELDS_STATUS=not-required
+    return 0
+  fi
   case "$provider" in
     github)
       if command -v gh >/dev/null 2>&1; then
@@ -231,6 +236,7 @@ process.stdout.write(fields.join("\0") + "\0");
     *) return 1 ;;
   esac
   fm_pr_head_valid "$FM_PR_PROVIDER_HEAD" || return 1
+  FM_PR_PROVIDER_FIELDS_STATUS=loaded
 }
 
 fm_pr_task_delivery_metadata_valid() {

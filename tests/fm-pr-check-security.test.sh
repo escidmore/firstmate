@@ -1140,6 +1140,34 @@ SH
   pass "migration reuses validated provider fields after poll publication"
 }
 
+test_migration_preserves_poll_on_provider_read_failure() {
+  local dir state before after rc
+  dir=$(make_case migration-provider-read-failure)
+  state="$dir/home/state"
+  write_task_meta "$dir"
+  run_check_entry "$dir" task-a https://github.com/o/r/pull/94 \
+    || fail "could not seed the provider-outage poll"
+  rm -f "$state/.pr-check-migration-v1" "$state/.pr-check-migration-scan-v1"
+  before=$(state_snapshot "$state" | grep -E 'task-a\.(check\.sh|pr-poll|pr-poll-registration)' || true)
+
+  set +e
+  FM_TEST_GH_VIEW_FAIL=1 FM_HOME="$dir/home" PATH="$dir/fakebin:$BASE_PATH" \
+    "$MIGRATE" > "$dir/migrate.out" 2> "$dir/migrate.err"
+  rc=$?
+  set -e
+
+  [ "$rc" -eq 0 ] || fail "migration blocked an active poll during provider unavailability"
+  after=$(state_snapshot "$state" | grep -E 'task-a\.(check\.sh|pr-poll|pr-poll-registration)' || true)
+  [ "$after" = "$before" ] \
+    || fail "provider outage changed active poll artifacts"
+  [ -f "$state/task-a.check.sh" ] && [ -f "$state/task-a.pr-poll" ] \
+    && [ -f "$state/task-a.pr-poll-registration" ] \
+    || fail "provider outage removed the active poll"
+  find "$state/.pr-check-quarantine" -name 'task-a.*' -type f 2>/dev/null | grep . >/dev/null \
+    && fail "provider outage quarantined the active poll" || true
+  pass "migration preserves active polls while the provider is unavailable"
+}
+
 test_migration_quarantines_poll_without_recorded_head() {
   local dir state rc
   dir=$(make_case migration-missing-recorded-head)
@@ -2253,7 +2281,7 @@ test_failed_outcomes_block_every_retry_until_repaired() {
     mkdir "$state/task-a.pr-poll"
 
     set +e
-    FM_HOME="$dir/home" PATH="$BASE_PATH" "$MIGRATE" > "$dir/migrate-1.out" 2> "$dir/migrate-1.err"
+    FM_HOME="$dir/home" PATH="$dir/fakebin:$BASE_PATH" "$MIGRATE" > "$dir/migrate-1.out" 2> "$dir/migrate-1.err"
     rc=$?
     set -e
     [ "$rc" -ne 0 ] || fail "$classification partial quarantine unexpectedly succeeded"
@@ -2269,7 +2297,7 @@ test_failed_outcomes_block_every_retry_until_repaired() {
     chmod 0600 "$state/.pr-check-migration-v1"
 
     set +e
-    FM_HOME="$dir/home" PATH="$BASE_PATH" "$MIGRATE" > "$dir/migrate-2.out" 2> "$dir/migrate-2.err"
+    FM_HOME="$dir/home" PATH="$dir/fakebin:$BASE_PATH" "$MIGRATE" > "$dir/migrate-2.out" 2> "$dir/migrate-2.err"
     rc=$?
     set -e
     [ "$rc" -ne 0 ] || fail "$classification unrepaired retry unexpectedly succeeded"
@@ -3930,6 +3958,7 @@ test_migration_validates_each_canonical_task_before_rearm
 test_migration_rejects_changed_delivery_on_existing_poll
 test_migration_rejects_changed_provider_head_on_existing_poll
 test_migration_reuses_prepublication_delivery_validation
+test_migration_preserves_poll_on_provider_read_failure
 test_migration_quarantines_poll_without_recorded_head
 test_rejected_metacharacter_bytes_are_inert
 test_static_poll_contract
