@@ -795,7 +795,9 @@ test_spawn_relaunch_requires_equal_delivery_rules_in_the_brief() {
     'issue_key=TASK-91' \
     'delivery_title_rule={issue_key}:' \
     'delivery_link_rule=https://tracker.example/issue/{issue_key}' >> "$meta"
-  printf '%s\n' 'Delivery issue: TASK-91' >> "$brief"
+  printf '%s\n' \
+    '# Definition of done' \
+    'Delivery issue: TASK-91' >> "$brief"
   printf 'zsh' > "$dir/fake/command"
   out=$(run_spawn "$dir" rl35 --relaunch); rc=$?
   expect_code 1 "$rc" "relaunch without its durable delivery fields in the brief should refuse"
@@ -811,6 +813,7 @@ test_spawn_relaunch_requires_equal_delivery_rules_in_the_brief() {
     'delivery_title_rule={issue_key}:' \
     'delivery_link_rule=https://tracker.example/issue/{issue_key}' >> "$meta"
   printf '%s\n' \
+    '# Definition of done' \
     'Delivery issue: TASK-91' \
     'Delivery title rule: {issue_key}:' \
     'Delivery link rule: https://tracker.example/issue/{issue_key}' >> "$brief"

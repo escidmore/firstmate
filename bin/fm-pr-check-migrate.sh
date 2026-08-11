@@ -1079,7 +1079,13 @@ if migration_needed; then
         path=$MIGRATION_PATH
         number=$MIGRATION_NUMBER
         delivery_validated=0
-        if fm_pr_poll_artifacts_valid "$STATE" "$id" "$TEMPLATE"; then
+        if [ ! -e "$data" ] && [ ! -L "$data" ] \
+          && [ ! -e "$registration" ] && [ ! -L "$registration" ]; then
+          FM_PR_PROVIDER_FIELDS_STATUS=not-checked
+          if fm_pr_task_delivery_fields_valid "$meta" "$provider" "$url" "$host" "$path" "$number" 1; then
+            delivery_validated=1
+          fi
+        elif fm_pr_poll_artifacts_valid "$STATE" "$id" "$TEMPLATE"; then
           FM_PR_PROVIDER_FIELDS_STATUS=not-checked
           if fm_pr_task_delivery_fields_valid "$meta" "$provider" "$url" "$host" "$path" "$number" 1; then
             delivery_validated=1
