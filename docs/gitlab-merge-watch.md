@@ -31,7 +31,9 @@ The stored record therefore carries `provider`, `url`, `host`, `path`, and `numb
 
 ## Current provider snapshot contract
 
-Firstmate reads the JSON output's top-level `sha`, `title`, and `description` fields from one provider observation.
+Firstmate requests one `glab` JSON provider observation and reads its top-level `sha`, `title`, and `description` fields.
+When a task declares delivery rules, that same snapshot supplies the title and description used to validate the PR before registration.
+The GitLab JSON parser uses the universal `node` toolchain documented in [configuration.md](configuration.md).
 The head is accepted only when it is an exact commit hash, so a changed output format produces no registration rather than an unbound delivery record.
 `tests/fm-pr-check-security.test.sh` verifies this contract hermetically through registration behavior, including distinct top-level and nested heads and a changed title in the same JSON snapshot.
 
