@@ -308,11 +308,19 @@ test_delivery_issue_and_rules_are_explicit() {
   status=$?
   [ "$status" -ne 0 ] || fail "an invalid issue key should be refused"
 
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-delivery-c3 fixture-project --mode no-mistakes \
+  out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-delivery-c3 fixture-project --mode no-mistakes \
+    --delivery-title-rule '{issue_key}:' \
+    --delivery-link-rule 'https://tracker.example/issue/{issue_key}' 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "delivery rules without an issue key should be refused"
+  assert_contains "$out" "delivery rules require an issue key" \
+    "unbound delivery-rule refusal did not name the missing issue key"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-delivery-c4 fixture-project --mode no-mistakes \
     --issue-key external/42 --delivery-title-rule '{issue_key}:' \
     --delivery-link-rule 'https://tracker.example/issue/{issue_key}' >/dev/null 2>&1 \
     || fail "a brief with an issue key and delivery rules should scaffold"
-  brief="$home/data/brief-delivery-c3/brief.md"
+  brief="$home/data/brief-delivery-c4/brief.md"
   grep -qx 'Delivery issue: external/42' "$brief" \
     || fail "brief did not record its issue key"
   grep -qx 'Delivery title rule: {issue_key}:' "$brief" \

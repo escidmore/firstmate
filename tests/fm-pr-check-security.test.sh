@@ -715,9 +715,12 @@ SH
 }
 
 test_declared_delivery_rule_precedes_registration_and_merge() {
-  local dir state url rc provider valid_title valid_body malicious_title historical_poll before
+  local dir state url rc provider valid_title valid_body invalid_body malicious_title historical_poll before
   valid_title='TASK-91:guard delivery'
   valid_body='Tracks https://tracker.example/issue/TASK-91/guard-delivery'
+  invalid_body='Wrong issues xhttps://tracker.example/issue/TASK-91, /https://tracker.example/issue/TASK-91, '
+  invalid_body+='?https://tracker.example/issue/TASK-91, #https://tracker.example/issue/TASK-91, '
+  invalid_body+='=https://tracker.example/issue/TASK-91, https://evil.example/?next=https://tracker.example/issue/TASK-91, and https://tracker.example/issue/TASK-91x'
 
   for provider in github gitlab; do
     dir=$(make_case "rule-valid-$provider")
@@ -806,8 +809,7 @@ test_declared_delivery_rule_precedes_registration_and_merge() {
   dir=$(make_case rule-link-missing)
   write_delivery_task_meta "$dir" TASK-91 '{issue_key}:' 'https://tracker.example/issue/{issue_key}'
   set +e
-  FM_TEST_GH_TITLE="$valid_title" \
-    FM_TEST_GH_BODY='Wrong issues xhttps://tracker.example/issue/TASK-91 and https://tracker.example/issue/TASK-91x' \
+  FM_TEST_GH_TITLE="$valid_title" FM_TEST_GH_BODY="$invalid_body" \
     run_check_entry "$dir" task-a https://github.com/o/r/pull/91 > "$dir/stdout" 2> "$dir/stderr"
   rc=$?
   set -e

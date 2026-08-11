@@ -40,13 +40,15 @@ make_home() {  # <name> [<registry-line>...]
   printf '%s\n' "$home|$projects/proj|$fakebin"
 }
 
-write_brief() {  # <home> <id> [<recorded-mode>] [<issue-key>]
-  local home=$1 id=$2 mode=${3:-} issue_key=${4:-}
+write_brief() {  # <home> <id> [<recorded-mode>] [<issue-key>] [<title-rule>] [<link-rule>]
+  local home=$1 id=$2 mode=${3:-} issue_key=${4:-} title_rule=${5:-} link_rule=${6:-}
   mkdir -p "$home/data/$id"
   {
     printf 'You are a crewmate.\n\n# Definition of done\n'
     [ -z "$mode" ] || printf 'Delivery contract: mode=%s\n' "$mode"
     [ -z "$issue_key" ] || printf 'Delivery issue: %s\n' "$issue_key"
+    [ -z "$title_rule" ] || printf 'Delivery title rule: %s\n' "$title_rule"
+    [ -z "$link_rule" ] || printf 'Delivery link rule: %s\n' "$link_rule"
   } > "$home/data/$id/brief.md"
 }
 
@@ -167,6 +169,24 @@ EOF
   assert_not_contains "$out" "uppercase issue key" \
     "spawn rejected an opaque tracker-neutral issue key"
   pass "fm-spawn: the brief and spawn must carry the same opaque issue key"
+}
+
+test_spawn_refuses_unbound_delivery_rules() {
+  local rec home proj fakebin out status
+  rec=$(make_home unbound-rules)
+  IFS='|' read -r home proj fakebin <<EOF
+$rec
+EOF
+  write_brief "$home" delivery-rules-b6 no-mistakes '' '{issue_key}:' \
+    'https://tracker.example/issue/{issue_key}'
+  out=$(run_spawn "$home" "$fakebin" delivery-rules-b6 "$proj" claude --mode no-mistakes --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a brief with unbound delivery rules should exit non-zero"
+  assert_contains "$out" "brief carries an incomplete or invalid delivery rule" \
+    "spawn did not reject delivery rules without an issue key"
+  assert_absent "$home/state/delivery-rules-b6.meta" \
+    "unbound delivery rules reached task metadata"
+  pass "fm-spawn: delivery rules require a bound issue key"
 }
 
 # The registry is the captain's standing posture, so dropping below its rigor is
@@ -382,6 +402,7 @@ test_ship_spawn_requires_a_valid_delivery_contract
 test_scout_and_secondmate_refuse_delivery_flags
 test_spawn_refuses_a_brief_mode_mismatch
 test_spawn_refuses_an_issue_key_mismatch
+test_spawn_refuses_unbound_delivery_rules
 test_spawn_notices_a_rigor_downgrade_against_the_registry
 test_scout_records_no_delivery_posture
 test_promote_requires_and_records_the_delivery_contract

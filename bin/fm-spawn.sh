@@ -1671,10 +1671,11 @@ if [ "$KIND" = ship ]; then
     fi
   fi
   if [ -n "$BRIEF_TITLE_RULE" ] || [ -n "$BRIEF_LINK_RULE" ]; then
-    if [ -z "$BRIEF_TITLE_RULE" ] || [ -z "$BRIEF_LINK_RULE" ] \
+    if [ -z "$BRIEF_ISSUE_KEY" ] \
+      || [ -z "$BRIEF_TITLE_RULE" ] || [ -z "$BRIEF_LINK_RULE" ] \
       || ! fm_pr_delivery_rule_valid "$BRIEF_TITLE_RULE" \
       || ! fm_pr_delivery_rule_valid "$BRIEF_LINK_RULE"; then
-        echo "error: the brief carries an invalid delivery rule" >&2
+        echo "error: the brief carries an incomplete or invalid delivery rule" >&2
         exit 1
     fi
     if { [ -n "$DELIVERY_TITLE_RULE" ] && [ "$DELIVERY_TITLE_RULE" != "$BRIEF_TITLE_RULE" ]; } \

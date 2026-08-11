@@ -183,8 +183,10 @@ if [ "$KIND" != ship ] && { [ "$DELIVERY_TITLE_RULE_SET" -eq 1 ] || [ "$DELIVERY
 fi
 if [ "$DELIVERY_TITLE_RULE_SET" -ne "$DELIVERY_LINK_RULE_SET" ] \
   || { [ "$DELIVERY_TITLE_RULE_SET" -eq 1 ] \
-    && { ! fm_pr_delivery_rule_valid "$DELIVERY_TITLE_RULE" || ! fm_pr_delivery_rule_valid "$DELIVERY_LINK_RULE"; }; }; then
-  echo "error: delivery rules require valid title and link templates containing {issue_key}" >&2
+    && { [ -z "$ISSUE_KEY" ] \
+      || ! fm_pr_delivery_rule_valid "$DELIVERY_TITLE_RULE" \
+      || ! fm_pr_delivery_rule_valid "$DELIVERY_LINK_RULE"; }; }; then
+  echo "error: delivery rules require an issue key and valid title and link templates containing {issue_key}" >&2
   exit 1
 fi
 if [ "$KIND" != ship ] && [ "$ISSUE_KEY_SET" -eq 1 ]; then
