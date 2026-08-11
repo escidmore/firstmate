@@ -161,8 +161,10 @@ fm_pr_delivery_body_links_issue() {
     {
       rest = $0
       while ((pos = index(rest, needle)) > 0) {
+        prefix = substr(rest, 1, pos - 1)
         suffix = substr(rest, pos + length(needle))
-        if (suffix == "" || substr(suffix, 1, 1) !~ /[[:alnum:]_-]/) found = 1
+        if ((prefix == "" || substr(prefix, length(prefix), 1) !~ /[[:alnum:]_-]/) \
+          && (suffix == "" || substr(suffix, 1, 1) !~ /[[:alnum:]_-]/)) found = 1
         rest = substr(rest, pos + length(needle))
       }
     }

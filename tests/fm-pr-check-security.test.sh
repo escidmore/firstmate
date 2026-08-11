@@ -806,7 +806,8 @@ test_declared_delivery_rule_precedes_registration_and_merge() {
   dir=$(make_case rule-link-missing)
   write_delivery_task_meta "$dir" TASK-91 '{issue_key}:' 'https://tracker.example/issue/{issue_key}'
   set +e
-  FM_TEST_GH_TITLE="$valid_title" FM_TEST_GH_BODY='Wrong issue https://tracker.example/issue/TASK-91x' \
+  FM_TEST_GH_TITLE="$valid_title" \
+    FM_TEST_GH_BODY='Wrong issues xhttps://tracker.example/issue/TASK-91 and https://tracker.example/issue/TASK-91x' \
     run_check_entry "$dir" task-a https://github.com/o/r/pull/91 > "$dir/stdout" 2> "$dir/stderr"
   rc=$?
   set -e
