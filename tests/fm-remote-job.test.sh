@@ -18,6 +18,7 @@ FAKE_PERL_LOG="$TMP_ROOT/perl.log"
 REAL_GIT=$(command -v git)
 OTHER_PID=
 RECOVERY_WORKER_PID=
+WEDGE_STATE=
 mkdir -p "$REMOTE_ROOT/bin" "$REMOTE_HOME" "$ACCOUNT_HOME" "$RUNTIME_BIN"
 # worker.pid records the serving child, not its restart supervisor, so stopping
 # that pid alone leaves the supervisor to respawn - the leak
@@ -27,6 +28,9 @@ cleanup_remote_job_fixture() {
   [ -z "$RECOVERY_WORKER_PID" ] || kill "$RECOVERY_WORKER_PID" 2>/dev/null || true
   if [ -f "$STATE_ROOT/worker.pid" ]; then
     fm_remote_job_stop_worker_tree "$(cat "$STATE_ROOT/worker.pid")" || true
+  fi
+  if [ -n "$WEDGE_STATE" ] && [ -f "$WEDGE_STATE/worker.pid" ]; then
+    fm_remote_job_stop_worker_tree "$(cat "$WEDGE_STATE/worker.pid")" || true
   fi
   rm -rf -- "$TMP_ROOT"
 }
@@ -616,5 +620,30 @@ kill -TERM "$RECOVERY_WORKER_PID"
 wait "$RECOVERY_WORKER_PID" 2>/dev/null || true
 RECOVERY_WORKER_PID=
 pass "quarantine clears only after recorded execution has stopped"
+
+# Stopping the worker tree signals the serving child while it is publishing, so
+# an ownership publish can die between its rename temp and the rename. That temp
+# stays inside worker.lock, and clearing only the published names left the
+# directory non-empty: its rmdir failed, so the lock outlived its dead owner and
+# every later startup wedged on ownership it could never reclaim.
+WEDGE_HOME="$TMP_ROOT/wedge-account"
+WEDGE_STATE="$TMP_ROOT/wedge-jobs"
+mkdir -p "$WEDGE_HOME" "$WEDGE_STATE/worker.lock"
+chmod 700 "$WEDGE_HOME" "$WEDGE_STATE" "$WEDGE_STATE/worker.lock"
+: > "$WEDGE_STATE/worker.lock/.quarantine.stale"
+chmod 600 "$WEDGE_STATE/worker.lock/.quarantine.stale"
+touch -t 200001010000 "$WEDGE_STATE/worker.lock"
+export FM_REMOTE_JOB_STATE_ROOT="$WEDGE_STATE"
+fm_remote_job_ensure_worker "$REMOTE_ROOT" "$WEDGE_HOME" \
+  || fail "$FM_REMOTE_JOB_ERROR"
+: > "$WEDGE_STATE/worker.lock/.pid.stale"
+fm_remote_job_stop_worker_tree "$(cat "$WEDGE_STATE/worker.pid")" || true
+for _ in $(seq 1 100); do
+  [ ! -d "$WEDGE_STATE/worker.lock" ] && break
+  sleep 0.05
+done
+assert_absent "$WEDGE_STATE/worker.lock" "an interrupted publish temp outlived the worker that owned it"
+export FM_REMOTE_JOB_STATE_ROOT="$STATE_ROOT"
+pass "an interrupted ownership publish does not wedge worker startup"
 
 echo "ALL TESTS PASSED"
