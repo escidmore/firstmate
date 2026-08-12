@@ -44,7 +44,7 @@ elif [ "$#" -eq 0 ]; then
   if [ "$provider" = forgejo ]; then
     meta=${data%.pr-poll}.meta
     [ -f "$meta" ] && [ ! -L "$meta" ] || exit 0
-    project=$(sed -n 's/^project=//p' "$meta" | tail -1)
+    project=$(sed -n 's/^project=//p' "$meta" 2>/dev/null | tail -1)
   fi
 else
   exit 0

@@ -3027,7 +3027,7 @@ EOF
 }
 
 test_forgejo_merge_watch() {
-  local dir state out rc url value noforgejo entry bindir name
+  local dir state out rc url value noforgejo entry bindir name poll_bin
   dir=$(make_case forgejo-merge-watch)
   state="$dir/home/state"
   url=https://forgejo.example/owner/repo/pulls/7
@@ -3051,6 +3051,25 @@ owner/repo
   done
   out=$(FM_TEST_FORGEJO_MERGED=true run_poll "$dir")
   [ "$out" = merged ] || fail "Forgejo poll did not emit exactly one merged line"
+  poll_bin="$dir/bin"
+  mkdir "$poll_bin"
+  cp "$POLL" "$poll_bin/task-a.check.sh"
+  cp "$ROOT/bin/fm-pr-lib.sh" "$poll_bin/fm-pr-lib.sh"
+  cp "$ROOT/bin/fm-project-origin-lib.sh" "$poll_bin/fm-project-origin-lib.sh"
+  cp "$state/task-a.pr-poll" "$poll_bin/task-a.pr-poll"
+  cp "$state/task-a.meta" "$poll_bin/task-a.meta"
+  chmod 0600 "$poll_bin/task-a.check.sh" "$poll_bin/fm-pr-lib.sh" \
+    "$poll_bin/fm-project-origin-lib.sh" "$poll_bin/task-a.pr-poll" "$poll_bin/task-a.meta"
+  chmod 000 "$poll_bin/task-a.meta"
+  set +e
+  out=$(FM_TEST_FORGEJO_MERGED=true FM_TEST_FORGEJO_AXI_LOG="$dir/forgejo-axi.log" \
+    PATH="$dir/fakebin:$BASE_PATH" bash "$poll_bin/task-a.check.sh" 2> "$dir/poll.err")
+  rc=$?
+  set -e
+  chmod 0600 "$poll_bin/task-a.meta"
+  [ "$rc" -eq 0 ] || fail "Forgejo poll failed on unreadable metadata"
+  [ -z "$out" ] || fail "Forgejo poll emitted with unreadable metadata"
+  [ ! -s "$dir/poll.err" ] || fail "Forgejo poll leaked a metadata read error"
   printf '%s\n' "touch \"\$FM_TEST_ADJACENT_LIB_MARKER\"" > "$dir/home/bin/fm-pr-lib.sh"
   out=$(FM_TEST_FORGEJO_MERGED=true FM_TEST_ADJACENT_LIB_MARKER="$dir/adjacent-lib-ran" run_poll "$dir")
   [ "$out" = merged ] || fail "Forgejo poll did not use its trusted library"
@@ -3132,6 +3151,58 @@ EOF
   esac
   [ ! -e "$state/task-b.check.sh" ] || fail "refused Forgejo arming left a poll armed"
   pass "Forgejo pull requests record their head and wake only on exact merged truth"
+}
+
+test_forgejo_migration_readiness() {
+  local dir state url noforgejo entry name out rc
+  dir=$(make_case forgejo-migration-no-cli)
+  state="$dir/home/state"
+  url=https://forgejo.example/owner/repo/pulls/8
+  fm_write_meta "$state/task-a.meta" \
+    'window=fm-task-a' \
+    "project=$dir/project" \
+    "pr=$url"
+  printf 'legacy bytes\n' > "$state/task-a.check.sh"
+  noforgejo="$dir/noforgejo"
+  mkdir "$noforgejo"
+  for entry in "$dir/fakebin"/*; do
+    [ -e "$entry" ] || continue
+    name=$(basename "$entry")
+    [ "$name" = forgejo-axi ] && continue
+    ln -s "$entry" "$noforgejo/$name"
+  done
+  set +e
+  out=$(FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$dir/root" \
+    PATH="$noforgejo:$BASE_PATH" "$MIGRATE" 2> "$dir/migrate.err")
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "Forgejo migration armed a poll without forgejo-axi"
+  [ -z "$out" ] || fail "Forgejo migration emitted success without forgejo-axi"
+  [ ! -e "$state/task-a.check.sh" ] || fail "Forgejo migration left a legacy check runnable without forgejo-axi"
+  [ ! -e "$state/task-a.pr-poll" ] || fail "Forgejo migration published a poll without forgejo-axi"
+  assert_grep 'task task-a: canonical poll migration is incomplete; poll remains unarmed' \
+    "$state/.pr-check-migration.log" \
+    "Forgejo migration did not persist its unavailable-CLI diagnostic"
+
+  dir=$(make_case forgejo-migration-unauthorized)
+  state="$dir/home/state"
+  git -C "$dir/project" remote set-url origin git@arbitrary.example:fork/repo.git
+  fm_write_meta "$state/task-a.meta" \
+    'window=fm-task-a' \
+    "project=$dir/project" \
+    "pr=$url"
+  printf 'legacy bytes\n' > "$state/task-a.check.sh"
+  set +e
+  out=$(FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$dir/root" \
+    PATH="$dir/fakebin:$BASE_PATH" "$MIGRATE" 2> "$dir/migrate.err")
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "Forgejo migration armed a poll for an unauthorized project host"
+  [ -z "$out" ] || fail "Forgejo migration emitted success for an unauthorized project host"
+  [ ! -e "$state/task-a.check.sh" ] || fail "Forgejo migration left an unauthorized legacy check runnable"
+  [ ! -e "$state/task-a.pr-poll" ] || fail "Forgejo migration published an unauthorized poll"
+  [ ! -s "$dir/forgejo-axi.log" ] || fail "Forgejo migration invoked forgejo-axi for an unauthorized project host"
+  pass "Forgejo migration refuses unavailable and unauthorized poll rebuilds"
 }
 
 seed_canonical_poll() {
@@ -3614,6 +3685,7 @@ test_parser_matrix
 test_gitlab_merge_watch
 test_forgejo_project_remote_forms
 test_forgejo_merge_watch
+test_forgejo_migration_readiness
 test_merged_poll_retires_once
 test_persistent_secondmate_retirement_is_poll_only
 test_retirement_crash_recovery
