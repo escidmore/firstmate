@@ -3051,22 +3051,14 @@ owner/repo
   done
   out=$(FM_TEST_FORGEJO_MERGED=true run_poll "$dir")
   [ "$out" = merged ] || fail "Forgejo poll did not emit exactly one merged line"
-  poll_bin="$dir/bin"
-  mkdir "$poll_bin"
-  cp "$POLL" "$poll_bin/task-a.check.sh"
-  cp "$ROOT/bin/fm-pr-lib.sh" "$poll_bin/fm-pr-lib.sh"
-  cp "$ROOT/bin/fm-project-origin-lib.sh" "$poll_bin/fm-project-origin-lib.sh"
-  cp "$state/task-a.pr-poll" "$poll_bin/task-a.pr-poll"
-  cp "$state/task-a.meta" "$poll_bin/task-a.meta"
-  chmod 0600 "$poll_bin/task-a.check.sh" "$poll_bin/fm-pr-lib.sh" \
-    "$poll_bin/fm-project-origin-lib.sh" "$poll_bin/task-a.pr-poll" "$poll_bin/task-a.meta"
-  chmod 000 "$poll_bin/task-a.meta"
+  chmod 000 "$state/task-a.meta"
   set +e
   out=$(FM_TEST_FORGEJO_MERGED=true FM_TEST_FORGEJO_AXI_LOG="$dir/forgejo-axi.log" \
-    PATH="$dir/fakebin:$BASE_PATH" bash "$poll_bin/task-a.check.sh" 2> "$dir/poll.err")
+    FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" PATH="$dir/fakebin:$BASE_PATH" \
+    bash "$state/task-a.check.sh" 2> "$dir/poll.err")
   rc=$?
   set -e
-  chmod 0600 "$poll_bin/task-a.meta"
+  chmod 0600 "$state/task-a.meta"
   [ "$rc" -eq 0 ] || fail "Forgejo poll failed on unreadable metadata"
   [ -z "$out" ] || fail "Forgejo poll emitted with unreadable metadata"
   [ ! -s "$dir/poll.err" ] || fail "Forgejo poll leaked a metadata read error"

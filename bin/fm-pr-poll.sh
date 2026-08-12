@@ -79,10 +79,14 @@ case "$provider" in
     [ "$state" = MERGED ] && printf '%s\n' merged
     ;;
   forgejo)
-    poll_dir=$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd) || exit 0
-    [ "${poll_dir##*/}" = bin ] || exit 0
-    pr_lib="$poll_dir/fm-pr-lib.sh"
-    [ -f "$pr_lib" ] || exit 0
+    if [ -n "${FM_ROOT_OVERRIDE:-}" ]; then
+      pr_lib="$FM_ROOT_OVERRIDE/bin/fm-pr-lib.sh"
+    else
+      poll_dir=$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd) || exit 0
+      [ "${poll_dir##*/}" = bin ] || exit 0
+      pr_lib="$poll_dir/fm-pr-lib.sh"
+    fi
+    [ -f "$pr_lib" ] && [ ! -L "$pr_lib" ] || exit 0
     # shellcheck source=bin/fm-pr-lib.sh
     . "$pr_lib"
     fm_pr_url_parse "$url" || exit 0
