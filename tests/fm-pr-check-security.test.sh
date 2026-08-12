@@ -3010,6 +3010,46 @@ EOF
   pass "Forgejo authorization preserves every supported remote connection form"
 }
 
+test_forgejo_fetch_source_rejects_credentials() {
+  local dir real_git source
+  dir=$(make_case forgejo-fetch-source-credentials)
+  git -C "$dir/project" remote set-url origin \
+    https://user:token@forgejo.example/fork/repo.git
+  git -C "$dir/project" remote set-url --add --push origin \
+    https://forgejo.example/fork/repo.git
+  real_git=$(command -v git)
+  cat > "$dir/fakebin/git" <<'SH'
+#!/usr/bin/env bash
+for arg in "$@"; do
+  case "$arg" in
+    *token*) printf '%s\n' "$*" >> "$FM_TEST_GIT_LEAK_LOG"; exit 1 ;;
+  esac
+done
+exec "$FM_TEST_REAL_GIT" "$@"
+SH
+  chmod +x "$dir/fakebin/git"
+  : > "$dir/git-leak.log"
+  source=$(PATH="$dir/fakebin:$PATH" FM_TEST_REAL_GIT="$real_git" \
+    FM_TEST_GIT_LEAK_LOG="$dir/git-leak.log" \
+    fm_pr_forgejo_project_source "$dir/project" forgejo.example owner/repo \
+      "$dir/project" fetch) \
+    || fail "Forgejo fetch source rejected a credential-safe push URL"
+  [ "$source" = https://forgejo.example/owner/repo.git ] \
+    || fail "Forgejo fetch source did not select the credential-safe push URL"
+  [ ! -s "$dir/git-leak.log" ] \
+    || fail "Forgejo fetch source passed credentials to a Git process"
+  git -C "$dir/project" remote set-url --delete --push origin \
+    https://forgejo.example/fork/repo.git
+  ! PATH="$dir/fakebin:$PATH" FM_TEST_REAL_GIT="$real_git" \
+    FM_TEST_GIT_LEAK_LOG="$dir/git-leak.log" \
+    fm_pr_forgejo_project_source "$dir/project" forgejo.example owner/repo \
+      "$dir/project" fetch >/dev/null \
+    || fail "Forgejo fetch source accepted a credential-bearing remote"
+  [ ! -s "$dir/git-leak.log" ] \
+    || fail "Forgejo fetch source leaked credentials while refusing a remote"
+  pass "Forgejo fetch source uses only credential-safe configured remotes"
+}
+
 test_forgejo_merge_watch() {
   local dir state out rc url value noforgejo entry bindir name
   dir=$(make_case forgejo-merge-watch)
@@ -3597,6 +3637,7 @@ test_forgejo_merged_poll_retires() {
 test_parser_matrix
 test_gitlab_merge_watch
 test_forgejo_project_remote_forms
+test_forgejo_fetch_source_rejects_credentials
 test_forgejo_merge_watch
 test_merged_poll_retires_once
 test_persistent_secondmate_retirement_is_poll_only

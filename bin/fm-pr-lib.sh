@@ -142,10 +142,41 @@ fm_pr_forgejo_host_valid() {
   [[ ! "$host" =~ ^(0x[0-9a-f]+|[0-9]+)(\.(0x[0-9a-f]+|[0-9]+))*$ ]]
 }
 
+fm_pr_forgejo_source_without_credentials() {
+  local source=${1-} scheme rest authority path
+  case "$source" in
+    http://*|https://*|git://*)
+      scheme=${source%%://*}
+      rest=${source#*://}
+      authority=${rest%%/*}
+      path=${rest#*/}
+      authority=${authority##*@}
+      printf '%s://%s/%s' "$scheme" "$authority" "$path"
+      ;;
+    *)
+      printf '%s' "$source"
+      ;;
+  esac
+}
+
+fm_pr_forgejo_source_safe_for_git() {
+  local source=${1-} rest authority
+  case "$source" in
+    http://*|https://*|git://*)
+      rest=${source#*://}
+      authority=${rest%%/*}
+      case "$authority" in
+        *@*) return 1 ;;
+      esac
+      ;;
+  esac
+}
+
 fm_pr_forgejo_project_source() {
-  local project=${1-} host=${2-} path=${3-} git_context=${4:-${1-}} remote key url remote_host source effective effective_host lib_dir
+  local project=${1-} host=${2-} path=${3-} git_context=${4:-${1-}} mode=${5-} remote key url remote_host source safe_source effective effective_host lib_dir
   fm_pr_forgejo_host_valid "$host" || return 1
   [ -z "$path" ] || fm_pr_forgejo_path_valid "$path" || return 1
+  case "$mode" in ''|fetch) ;; *) return 1 ;; esac
   [ -d "$project" ] && git -C "$project" rev-parse --git-dir >/dev/null 2>&1 || return 1
   lib_dir=$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd) || return 1
   # shellcheck source=bin/fm-project-origin-lib.sh
@@ -158,10 +189,17 @@ fm_pr_forgejo_project_source() {
         [ "$remote_host" = "$host" ] || continue
         if [ -n "$path" ]; then
           source=$(fm_project_origin_with_path "$url" "$path.git") || continue
-          effective=$(git -C "$git_context" ls-remote --get-url "$source" 2>/dev/null) || continue
+          [ "$mode" != fetch ] || fm_pr_forgejo_source_safe_for_git "$source" || continue
+          safe_source=$(fm_pr_forgejo_source_without_credentials "$source") || continue
+          effective=$(git -C "$git_context" ls-remote --get-url "$safe_source" 2>/dev/null) || continue
           effective_host=$(fm_project_origin_host "$effective") || continue
           [ "$effective_host" = "$remote_host" ] || continue
-          printf '%s' "$source"
+          if [ "$mode" = fetch ]; then
+            fm_pr_forgejo_source_safe_for_git "$effective" || continue
+            printf '%s' "$safe_source"
+          else
+            printf '%s' "$source"
+          fi
         else
           printf '%s' "$url"
         fi
