@@ -13,7 +13,7 @@
 # Validation is STRUCTURE AND SAFETY ONLY, never the forge or the domain.
 # Firstmate is a shared template, so any host must be able to serve a project:
 # GitHub, GitHub Enterprise on a private domain, GitLab hosted or self-hosted,
-# Bitbucket, Gitea, Codeberg, sr.ht, a bare IP, an SSH config alias, or a plain
+# Forgejo, Bitbucket, Gitea, Codeberg, sr.ht, a bare IP, an SSH config alias, or a plain
 # server nobody else has heard of. There is no host, domain, or forge allowlist
 # here, and there must never be one.
 #
