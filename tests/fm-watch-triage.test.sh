@@ -828,8 +828,7 @@ test_live_declared_pause_repaints_stay_bounded() {
   # The pause is already older than the re-surface window, so only the throttle
   # marker - not a fresh status file - can keep the repaints quiet.
   back=$(( $(date +%s) - 500 ))
-  if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$back" '+%Y%m%d%H%M.%S')" "$statusf"
-  else touch -m -d "@$back" "$statusf"; fi
+  set_mtime "$back" "$statusf"
   sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-held_status"
   key=$(printf '%s' "$window" | tr ':/.' '___')
 

@@ -373,12 +373,14 @@ clear_pause_tracking() {  # <window>
 # On FIRST sight only a confidently dead ordinary crew may recover paused
 # classification after fm-crew-state has fallen back to stopped or unknown: a
 # live agent's pane may be parked at a real gate that must reach firstmate once.
-# Once that first sight has surfaced and put the window on the bounded cadence
-# (.paused-<key> exists), a still-declared pause stays paused whether or not the
-# agent is alive, so an idle pane repainting a clock or token counter is absorbed
-# on the pause cadence instead of re-alerting per repaint.
+# Once that first sight has surfaced and put an ordinary crew on the bounded
+# cadence (.paused-<key> exists), a still-declared pause stays paused whether or
+# not the agent is alive, so an idle pane repainting a clock or token counter is
+# absorbed on the pause cadence instead of re-alerting per repaint. That
+# marker-based recovery is ordinary crew only: a secondmate is classified exactly
+# as it was before, keeping secondmate supervision outside this contract.
 pause_state_class() {  # <window> <task>
-  local win=$1 task=$2 key last recheck_file class agent_alive
+  local win=$1 task=$2 key last recheck_file class agent_alive kind
   key=${win//:/_}
   key=${key//\//_}
   key=${key//./_}
@@ -399,7 +401,8 @@ pause_state_class() {  # <window> <task>
     printf 'working'
     return
   fi
-  if [ "$(window_kind "$win")" != secondmate ] && [ ! -e "$STATE/.paused-$key" ]; then
+  kind=$(window_kind "$win")
+  if [ "$kind" != secondmate ] && [ ! -e "$STATE/.paused-$key" ]; then
     agent_alive=$(fm_backend_agent_alive "$(window_backend "$win")" "$win" 2>/dev/null) || agent_alive=unknown
     if [ "$agent_alive" != dead ]; then
       rm -f "$recheck_file"
@@ -407,7 +410,10 @@ pause_state_class() {  # <window> <task>
       return
     fi
   fi
-  [ "$class" = none ] && { [ "${agent_alive:-unknown}" = dead ] || [ -e "$STATE/.paused-$key" ]; } && class=paused
+  [ "$class" = none ] \
+    && { [ "${agent_alive:-unknown}" = dead ] \
+      || { [ "$kind" != secondmate ] && [ -e "$STATE/.paused-$key" ]; }; } \
+    && class=paused
   case "$class" in
     paused) date +%s > "$recheck_file" ;;
     *) rm -f "$recheck_file" ;;
