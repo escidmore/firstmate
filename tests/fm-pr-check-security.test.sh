@@ -785,11 +785,27 @@ make_poll_fixture() {
 }
 
 run_poll() {
-  local dir=$1
+  local dir=$1 sidecar="$1/home/state/task-a.pr-poll" provider url host path number project=
+  provider=$(sed -n '1p' "$sidecar" 2>/dev/null || true)
+  if [ "$provider" != forgejo ]; then
+    FM_TEST_GH_LOG="$dir/gh.log" FM_TEST_GLAB_LOG="$dir/glab.log" \
+      FM_TEST_FORGEJO_AXI_LOG="$dir/forgejo-axi.log" \
+      PATH="$dir/fakebin:$BASE_PATH" \
+      bash "$dir/home/state/task-a.check.sh"
+    return
+  fi
+  url=$(sed -n '2p' "$sidecar")
+  host=$(sed -n '3p' "$sidecar")
+  path=$(sed -n '4p' "$sidecar")
+  number=$(sed -n '5p' "$sidecar")
+  if [ "$provider" = forgejo ]; then
+    project=$(sed -n 's/^project=//p' "$dir/home/state/task-a.meta" | tail -1)
+  fi
   FM_TEST_GH_LOG="$dir/gh.log" FM_TEST_GLAB_LOG="$dir/glab.log" \
     FM_TEST_FORGEJO_AXI_LOG="$dir/forgejo-axi.log" \
+    FM_ROOT_OVERRIDE= FM_HOME="$dir/home" \
     PATH="$dir/fakebin:$BASE_PATH" \
-    bash "$dir/home/state/task-a.check.sh"
+    bash "$POLL" --validated "$provider" "$url" "$host" "$path" "$number" "$project"
 }
 
 test_static_poll_contract() {
@@ -3035,10 +3051,10 @@ owner/repo
   done
   out=$(FM_TEST_FORGEJO_MERGED=true run_poll "$dir")
   [ "$out" = merged ] || fail "Forgejo poll did not emit exactly one merged line"
-  printf '%s\n' "touch \"\$FM_TEST_ADJACENT_LIB_MARKER\"" > "$state/fm-pr-lib.sh"
+  printf '%s\n' "touch \"\$FM_TEST_ADJACENT_LIB_MARKER\"" > "$dir/home/bin/fm-pr-lib.sh"
   out=$(FM_TEST_FORGEJO_MERGED=true FM_TEST_ADJACENT_LIB_MARKER="$dir/adjacent-lib-ran" run_poll "$dir")
   [ "$out" = merged ] || fail "Forgejo poll did not use its trusted library"
-  [ ! -e "$dir/adjacent-lib-ran" ] || fail "Forgejo poll sourced a library from writable state"
+  [ ! -e "$dir/adjacent-lib-ran" ] || fail "Forgejo poll sourced a library from writable FM_HOME"
   out=$(FM_TEST_FORGEJO_MERGED=true FM_TEST_FORGEJO_AXI_FAIL=1 run_poll "$dir")
   [ -z "$out" ] || fail "Forgejo poll emitted after a forgejo-axi failure"
   grep -qF 'pr merged --base-url https://forgejo.example --repo owner/repo 7' "$dir/forgejo-axi.log" \

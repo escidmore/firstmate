@@ -80,15 +80,8 @@ case "$provider" in
     ;;
   forgejo)
     poll_dir=$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd) || exit 0
-    if [ -n "${FM_ROOT_OVERRIDE:-}" ] && [ -f "$FM_ROOT_OVERRIDE/bin/fm-pr-lib.sh" ]; then
-      pr_lib="$FM_ROOT_OVERRIDE/bin/fm-pr-lib.sh"
-    elif [ -n "${FM_HOME:-}" ] && [ -f "$FM_HOME/bin/fm-pr-lib.sh" ]; then
-      pr_lib="$FM_HOME/bin/fm-pr-lib.sh"
-    elif [ "${poll_dir##*/}" = bin ] && [ -f "$poll_dir/fm-pr-lib.sh" ]; then
-      pr_lib="$poll_dir/fm-pr-lib.sh"
-    else
-      pr_lib="${poll_dir%/state}/bin/fm-pr-lib.sh"
-    fi
+    [ "${poll_dir##*/}" = bin ] || exit 0
+    pr_lib="$poll_dir/fm-pr-lib.sh"
     [ -f "$pr_lib" ] || exit 0
     # shellcheck source=bin/fm-pr-lib.sh
     . "$pr_lib"
