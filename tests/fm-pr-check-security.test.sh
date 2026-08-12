@@ -803,7 +803,7 @@ run_poll() {
   fi
   FM_TEST_GH_LOG="$dir/gh.log" FM_TEST_GLAB_LOG="$dir/glab.log" \
     FM_TEST_FORGEJO_AXI_LOG="$dir/forgejo-axi.log" \
-    FM_ROOT_OVERRIDE= FM_HOME="$dir/home" \
+    FM_ROOT_OVERRIDE='' FM_HOME="$dir/home" \
     PATH="$dir/fakebin:$BASE_PATH" \
     bash "$POLL" --validated "$provider" "$url" "$host" "$path" "$number" "$project"
 }
@@ -3027,7 +3027,7 @@ EOF
 }
 
 test_forgejo_merge_watch() {
-  local dir state out rc url value noforgejo entry bindir name poll_bin
+  local dir state out rc url value noforgejo entry bindir name
   dir=$(make_case forgejo-merge-watch)
   state="$dir/home/state"
   url=https://forgejo.example/owner/repo/pulls/7
