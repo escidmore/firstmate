@@ -802,6 +802,82 @@ test_exited_declared_pause_is_bounded_but_live_gate_surfaces() {
   pass "exited declared-pause and captain-held panes use bounded pause cadence while a live decision gate still surfaces once"
 }
 
+# Arm a watcher over a LIVE (grok) crew whose authoritative state is a declared
+# pause, on a re-surface window short enough to exercise inside one test.
+arm_live_paused_watcher() {  # <state> <fakebin> <out> <window> <capture>
+  PATH="$2:$PATH" FM_FAKE_TMUX_WINDOW="$4" FM_FAKE_TMUX_CAPTURE="$5" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=grok \
+    FM_FAKE_CREW_STATE='state: paused · source: status-log · holding for the upstream tool release' \
+    FM_STATE_OVERRIDE="$1" FM_CREW_STATE_BIN="$2/fm-crew-state.sh" \
+    FM_PAUSE_RESURFACE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" >> "$3" &
+}
+
+# The live counterpart of the case above. An idle agent's pane keeps repainting
+# a clock or a token counter, and each repaint settles into a new stale hash, so
+# a live declared pause is re-triaged over and over during one external wait.
+# First sight must still surface once, so a real decision gate is never hidden,
+# but every repaint after it belongs to the bounded pause cadence.
+test_live_declared_pause_repaints_stay_bounded() {
+  local dir state fakebin out capture_file statusf window key sig pid back round ticks wakes bare last_hash
+  dir=$(make_case live-declared-pause-repaints); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"; statusf="$state/held.status"
+  window="test:fm-held"
+  printf 'window=%s\nkind=ship\nharness=grok\nbackend=tmux\n' "$window" > "$state/held.meta"
+  printf 'paused: holding for the upstream tool release\n' > "$statusf"
+  # The pause is already older than the re-surface window, so only the throttle
+  # marker - not a fresh status file - can keep the repaints quiet.
+  back=$(( $(date +%s) - 500 ))
+  if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$back" '+%Y%m%d%H%M.%S')" "$statusf"
+  else touch -m -d "@$back" "$statusf"; fi
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-held_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+
+  # First sight of the declared pause: primed to go stale on the first poll.
+  printf 'idle, holding for upstream (token 1)' > "$capture_file"
+  last_hash=$(hash_text 'idle, holding for upstream (token 1)')
+  printf '%s' "$last_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  arm_live_paused_watcher "$state" "$fakebin" "$out" "$window" "$capture_file"
+  pid=$!
+  wait_for_exit "$pid" 40 || fail "first sight of a live declared pause did not surface"
+  bare=$(awk -F '\t' -v w="$window" '$3 == "stale" && $4 == w && $5 == "stale: " w { n++ } END { print n + 0 }' "$state/.wake-queue")
+  [ "$bare" -eq 1 ] || fail "first sight of a live declared pause queued $bare bare stale wakes"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the first-sight surface"
+
+  # One re-armed watcher now sees the idle pane repaint, exactly as a ticking
+  # clock or token counter does during the wait. Each repaint settles into a new
+  # stale hash, so each re-enters the first-sighting path; none may re-alert.
+  arm_live_paused_watcher "$state" "$fakebin" "$out" "$window" "$capture_file"
+  pid=$!
+  round=2
+  while [ "$round" -le 4 ]; do
+    printf 'idle, holding for upstream (token %s)' "$round" > "$capture_file"
+    last_hash=$(hash_text "idle, holding for upstream (token $round)")
+    # The stale suppressor advances on both the surface and the absorb path, so
+    # waiting for it keeps every repaint a real triage instead of a timing no-op.
+    ticks=0
+    while [ "$ticks" -lt 150 ] && [ "$(cat "$state/.stale-$key" 2>/dev/null || true)" != "$last_hash" ] \
+      && kill -0 "$pid" 2>/dev/null; do
+      sleep 0.1
+      ticks=$((ticks + 1))
+    done
+    wakes=$(awk -F '\t' -v w="$window" '$3 == "stale" && $4 == w { n++ } END { print n + 0 }' "$state/.wake-queue")
+    [ "$wakes" -eq 0 ] \
+      || fail "a repaint re-alerted a declared pause inside its re-surface window ($wakes extra stale wakes by round $round)"
+    kill -0 "$pid" 2>/dev/null \
+      || fail "the watcher exited on repaint round $round of a declared pause inside its re-surface window"
+    [ "$(cat "$state/.stale-$key" 2>/dev/null || true)" = "$last_hash" ] \
+      || fail "live paused repaint round $round was never triaged (stale suppressor not advanced)"
+    round=$((round + 1))
+  done
+  reap "$pid"
+
+  [ -e "$state/.paused-$key" ] || fail "the repaints lost the pause cadence marker"
+  [ ! -e "$state/.stale-since-$key" ] || fail "an absorbed live paused repaint started the wedge timer"
+  pass "a live crew's declared pause stays on the bounded cadence across pane repaints, surfacing once"
+}
+
 test_secondmate_paused_resurfaces_in_normal_mode() {
   local dir state fakebin out capture_file statusf window key pane_hash sig pid back
   dir=$(make_case secondmate-paused-resurface); state="$dir/state"; fakebin="$dir/fakebin"
@@ -1872,6 +1948,7 @@ test_busy_pane_default_turn_age_bound_is_3600s
 test_nonterminal_stale_not_working_surfaced
 test_nonterminal_stale_paused_absorbed_then_resurfaced
 test_exited_declared_pause_is_bounded_but_live_gate_surfaces
+test_live_declared_pause_repaints_stay_bounded
 test_secondmate_paused_resurfaces_in_normal_mode
 test_secondmate_nonpaused_stale_remains_suppressed
 test_secondmate_unpause_clears_pause_tracking
