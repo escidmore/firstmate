@@ -169,7 +169,7 @@ fm_project_origin_safe() { # <url>; 0 when the URL is an accepted clone URL
         *[!0-9A-Fa-f:.%]*) return 1 ;;
       esac
       FM_PROJECT_ORIGIN_HOST=$inner
-      FM_PROJECT_ORIGIN_PREFIX=${url%"$path"}
+      FM_PROJECT_ORIGIN_PREFIX=${url%"${path#/}"}
       return 0
       ;;
   esac
@@ -187,7 +187,7 @@ fm_project_origin_safe() { # <url>; 0 when the URL is an accepted clone URL
     '' | :*) return 1 ;;
   esac
   FM_PROJECT_ORIGIN_HOST=$host
-  FM_PROJECT_ORIGIN_PREFIX=${url%"$path"}
+  FM_PROJECT_ORIGIN_PREFIX=${url%"${path#/}"}
   return 0
 }
 
