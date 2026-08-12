@@ -878,6 +878,67 @@ test_live_declared_pause_repaints_stay_bounded() {
   pass "a live crew's declared pause stays on the bounded cadence across pane repaints, surfacing once"
 }
 
+# The same bounded cadence, but with the authoritative crew read inconclusive
+# instead of paused: fm-crew-state falls back to unknown (an unreadable pane, a
+# torn-down worktree, a harness state read that failed) while the status log
+# still declares the pause. A window already on the cadence must stay on it -
+# only an authoritative working verdict or a status line that no longer declares
+# a pause may take it off - so the repaint is absorbed and the recheck marker is
+# refreshed rather than dropped, keeping the cheap fast path available.
+test_declared_pause_survives_inconclusive_crew_state() {
+  local dir state fakebin out capture_file statusf window key pane_hash sig pid back ticks wakes bare recheck
+  dir=$(make_case pause-cadence-inconclusive-state); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"; statusf="$state/held.status"
+  window="test:fm-held"
+  printf 'idle, holding for upstream (token 7)' > "$capture_file"
+  printf 'window=%s\nkind=ship\nharness=grok\nbackend=tmux\n' "$window" > "$state/held.meta"
+  printf 'paused: holding for the upstream tool release\n' > "$statusf"
+  back=$(( $(date +%s) - 500 ))
+  set_mtime "$back" "$statusf"
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-held_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text 'idle, holding for upstream (token 7)')
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+
+  # Already on the cadence: surfaced once and re-surfaced recently (so the
+  # cadence itself stays quiet this poll), with the recheck marker aged past
+  # STALE_ESCALATE_SECS so this repaint takes the slow authoritative path.
+  : > "$state/.paused-$key"
+  date +%s > "$state/.paused-resurfaced-$key"
+  printf '%s\n' "$back" > "$state/.paused-rechecked-$key"
+  set_mtime "$back" "$state/.paused-rechecked-$key"
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=grok \
+    FM_FAKE_CREW_STATE='state: unknown · source: none · pane unreadable' \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  ticks=0
+  while [ "$ticks" -lt 150 ] && [ "$(cat "$state/.stale-$key" 2>/dev/null || true)" != "$pane_hash" ] \
+    && kill -0 "$pid" 2>/dev/null; do
+    sleep 0.1
+    ticks=$((ticks + 1))
+  done
+  kill -0 "$pid" 2>/dev/null \
+    || fail "an inconclusive crew read dropped a declared pause off the bounded cadence and re-alerted: $(cat "$out")"
+  [ "$(cat "$state/.stale-$key" 2>/dev/null || true)" = "$pane_hash" ] \
+    || { reap "$pid"; fail "the inconclusive-state pause repaint was never triaged (stale suppressor not advanced)"; }
+  reap "$pid"
+  wakes=$(awk -F '\t' -v w="$window" '$3 == "stale" && $4 == w { n++ } END { print n + 0 }' "$state/.wake-queue" 2>/dev/null || printf 0)
+  bare=$(awk -F '\t' -v w="$window" '$3 == "stale" && $4 == w && $5 == "stale: " w { n++ } END { print n + 0 }' "$state/.wake-queue" 2>/dev/null || printf 0)
+  [ "$bare" -eq 0 ] || fail "an inconclusive crew read emitted $bare bare stale wakes for a declared pause"
+  [ "$wakes" -eq 0 ] || fail "an inconclusive crew read queued $wakes stale wakes inside the pause re-surface window"
+  [ -e "$state/.paused-$key" ] || fail "an inconclusive crew read cleared the pause cadence marker"
+  recheck=$(cat "$state/.paused-rechecked-$key" 2>/dev/null || printf 0)
+  [ "$recheck" -gt "$back" ] \
+    || fail "an inconclusive crew read dropped the pause recheck marker, so the fast path can never re-engage"
+  [ ! -e "$state/.stale-since-$key" ] || fail "an absorbed inconclusive-state pause started the wedge timer"
+  pass "a declared pause already on the bounded cadence survives an inconclusive authoritative crew read"
+}
+
 test_secondmate_paused_resurfaces_in_normal_mode() {
   local dir state fakebin out capture_file statusf window key pane_hash sig pid back
   dir=$(make_case secondmate-paused-resurface); state="$dir/state"; fakebin="$dir/fakebin"
@@ -1949,6 +2010,7 @@ test_nonterminal_stale_not_working_surfaced
 test_nonterminal_stale_paused_absorbed_then_resurfaced
 test_exited_declared_pause_is_bounded_but_live_gate_surfaces
 test_live_declared_pause_repaints_stay_bounded
+test_declared_pause_survives_inconclusive_crew_state
 test_secondmate_paused_resurfaces_in_normal_mode
 test_secondmate_nonpaused_stale_remains_suppressed
 test_secondmate_unpause_clears_pause_tracking
