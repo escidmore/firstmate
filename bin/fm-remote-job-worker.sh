@@ -666,7 +666,9 @@ worker_process_once() { # <account-home>
       worker_publish_result "$job" 126 || true
       continue
     fi
-    deadline=$(( $(date +%s) + timeout ))
+    # date has whole-second resolution; round up so flooring cannot shorten a
+    # newly claimed job's execution window by almost one second.
+    deadline=$(( $(date +%s) + timeout + 1 ))
     fm_remote_job_write_number "$job" deadline "$deadline" || {
       worker_publish_result "$job" 125 || true
       continue
