@@ -2286,7 +2286,8 @@ cleanup_firstmate_home_children() {
     rm -f "$sub_state/$child_id.status" "$sub_state/$child_id.turn-ended" \
       "$sub_state/$child_id.meta" "$sub_state/$child_id.pi-ext.ts" \
       "$sub_state/$child_id.grok-turnend-token" "$sub_state/$child_id.kimi-turnend-token" \
-      "$sub_state/$child_id.muse-session" "$sub_state/$child_id.muse-session-current"
+      "$sub_state/$child_id.muse-session" "$sub_state/$child_id.muse-session-current" \
+      "$sub_state/$child_id.cursor-session"
   done
 }
 
@@ -2564,7 +2565,7 @@ retire_busy_state "$STATE" "$ID" "$BUSY_GEN" || exit 1
 rm -f "$STATE/$ID.status" "$STATE/$ID.turn-ended" "$STATE/$ID.meta" \
   "$STATE/$ID.pi-ext.ts" "$STATE/$ID.grok-turnend-token" \
   "$STATE/$ID.kimi-turnend-token" "$STATE/$ID.muse-session" \
-  "$STATE/$ID.muse-session-current" \
+  "$STATE/$ID.muse-session-current" "$STATE/$ID.cursor-session" \
   "$STATE/.$ID.open-decisions-cursor" \
   "$STATE/$ID.control-relaunch" "$STATE/$ID.control-relaunch.meta-prior" \
   "$STATE/$ID.control-relaunch.brief-prior" "$STATE/$ID.control-relaunch.note"
